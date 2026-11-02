@@ -1,0 +1,257 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  color-scheme: light;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.21 0.01 264);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.01 264);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.01 264);
+  --primary: oklch(0.725 0.133 163.03);
+  --primary-foreground: oklch(0.99 0.002 247.839);
+  --secondary: oklch(0.96 0.004 264);
+  --secondary-foreground: oklch(0.32 0.01 264);
+  --muted: oklch(0.96 0.004 264);
+  --muted-foreground: oklch(0.52 0.012 264);
+  --accent: oklch(0.955 0.004 264);
+  --accent-foreground: oklch(0.24 0.01 264);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.99 0.002 270);
+  --border: oklch(0.91 0.006 264);
+  --input: oklch(0.91 0.006 264);
+  --ring: oklch(0.725 0.133 163.03);
+  --brand: oklch(0.725 0.133 163.03);
+  --brand-foreground: oklch(0.985 0.002 247.839);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0.75rem;
+  --sidebar: oklch(0.973 0.003 264);
+  --sidebar-foreground: oklch(0.24 0.01 264);
+  --sidebar-primary: oklch(0.725 0.133 163.03);
+  --sidebar-primary-foreground: oklch(0.99 0.002 247.839);
+  --sidebar-accent: oklch(0.93 0.004 264);
+  --sidebar-accent-foreground: oklch(0.21 0.01 264);
+  --sidebar-border: oklch(0.91 0.006 264);
+  --sidebar-ring: oklch(0.725 0.133 163.03);
+  --data-series-emerald: oklch(0.62 0.13 163);
+  --data-series-teal: oklch(0.66 0.1 190);
+  --data-series-indigo: oklch(0.55 0.11 265);
+  --data-series-violet: oklch(0.63 0.11 300);
+  --data-series-amber: oklch(0.72 0.12 78);
+  --data-series-rose: oklch(0.64 0.12 20);
+  --data-series-sky: oklch(0.63 0.1 235);
+  --data-series-lime: oklch(0.67 0.11 125);
+  --data-series-orange: oklch(0.67 0.15 48);
+  --data-series-pink: oklch(0.72 0.13 350);
+  --data-series-cyan: oklch(0.55 0.09 205);
+  --data-series-slate: oklch(0.58 0.03 250);
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* ---- 深色科技感 ----
+     底色偏蓝黑（色相 258），主色用青(195)——青色在大面积深色背景上
+     比绿色更有"仪表盘/控制台"的科技感，且仍保持冷调统一。
+     层级靠亮度差拉开：background < sidebar < card < secondary。 */
+
+  --background: oklch(0.145 0.018 258);
+  --foreground: oklch(0.94 0.01 255);
+  --card: oklch(0.192 0.022 258);
+  --card-foreground: oklch(0.94 0.01 255);
+  --popover: oklch(0.205 0.024 258);
+  --popover-foreground: oklch(0.94 0.01 255);
+  --primary: oklch(0.78 0.13 195);
+  --primary-foreground: oklch(0.16 0.02 258);
+  --secondary: oklch(0.255 0.026 258);
+  --secondary-foreground: oklch(0.94 0.01 255);
+  --muted: oklch(0.245 0.024 258);
+  --muted-foreground: oklch(0.71 0.022 255);
+  --accent: oklch(0.28 0.032 250);
+  --accent-foreground: oklch(0.95 0.01 255);
+  --destructive: oklch(0.66 0.2 22);
+  --destructive-foreground: oklch(0.98 0.005 250);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.78 0.13 195);
+  --brand: oklch(0.78 0.13 195);
+  --brand-foreground: oklch(0.16 0.02 258);
+
+  --chart-1: oklch(0.78 0.13 195);
+  --chart-2: oklch(0.72 0.14 165);
+  --chart-3: oklch(0.76 0.13 265);
+  --chart-4: oklch(0.72 0.16 300);
+  --chart-5: oklch(0.8 0.14 85);
+
+  /* 侧边栏比卡片再暗一档，形成"外框沉、内容浮"的层级 */
+  --sidebar: oklch(0.168 0.02 258);
+  --sidebar-foreground: oklch(0.92 0.01 255);
+  --sidebar-primary: oklch(0.78 0.13 195);
+  --sidebar-primary-foreground: oklch(0.16 0.02 258);
+  --sidebar-accent: oklch(0.235 0.026 255);
+  --sidebar-accent-foreground: oklch(0.95 0.01 255);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.78 0.13 195);
+
+  --data-series-emerald: oklch(0.75 0.13 163);
+  --data-series-teal: oklch(0.78 0.12 190);
+  --data-series-indigo: oklch(0.76 0.12 265);
+  --data-series-violet: oklch(0.78 0.12 300);
+  --data-series-amber: oklch(0.82 0.13 78);
+  --data-series-rose: oklch(0.76 0.13 20);
+  --data-series-sky: oklch(0.78 0.11 230);
+  --data-series-lime: oklch(0.8 0.12 125);
+  --data-series-orange: oklch(0.8 0.15 48);
+  --data-series-pink: oklch(0.79 0.12 350);
+  --data-series-cyan: oklch(0.8 0.11 200);
+  --data-series-slate: oklch(0.78 0.03 250);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    @apply bg-background text-foreground;
+    min-width: 320px;
+    height: 100%;
+    overflow: hidden;
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   深色科技感细节
+   ---------------------------------------------------------------------------
+   只在 .dark 下生效，浅色主题保持干净（浅色底加光晕/网格会显脏）。
+   三条克制原则：
+   1. 光晕不透明度 ≤ 6%，网格 ≤ 3% —— 它们只是"空气感"，不该抢内容。
+   2. 发光只给 primary（主操作），别的元素一律不加 —— 到处都是光晕
+      等于没有重点，反而更乱。
+   3. 全部用 background-image / box-shadow，不改布局盒模型，
+      避免影响既有栅格。
+--------------------------------------------------------------------------- */
+
+@layer base {
+  .dark body {
+    /* 左上角青色光晕 + 极淡网格。
+       网格 24px 一格，配合光晕形成"控制台底纹"的印象。 */
+    background-image:
+      radial-gradient(
+        ellipse 80% 50% at 15% 0%,
+        oklch(0.78 0.13 195 / 6%),
+        transparent 60%
+      ),
+      radial-gradient(
+        ellipse 60% 50% at 95% 5%,
+        oklch(0.76 0.12 265 / 4%),
+        transparent 55%
+      ),
+      repeating-linear-gradient(
+        0deg,
+        oklch(1 0 0 / 2.5%) 0 1px,
+        transparent 1px 24px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        oklch(1 0 0 / 2.5%) 0 1px,
+        transparent 1px 24px
+      );
+    background-attachment: fixed;
+  }
+
+  /* 卡片：顶部一道极细高光，暗示"上游光源" */
+  .dark [data-slot="card"] {
+    box-shadow:
+      inset 0 1px 0 0 oklch(1 0 0 / 6%),
+      0 1px 2px 0 oklch(0 0 0 / 30%);
+  }
+
+  /* 主按钮：静止时轻微内发光，hover 时扩散。
+     只作用于 primary 变体（default）—— destructive 是"危险操作"，
+     给它加青色光会误导；outline/ghost 是次级操作，不该抢注意力。
+     Button 组件已输出 data-variant，这里才能精确命中。 */
+  .dark [data-slot="button"][data-variant="default"] {
+    box-shadow:
+      0 0 0 1px oklch(0.78 0.13 195 / 25%),
+      0 2px 12px -2px oklch(0.78 0.13 195 / 30%);
+    transition: box-shadow 160ms ease, filter 160ms ease;
+  }
+  .dark [data-slot="button"][data-variant="default"]:hover {
+    box-shadow:
+      0 0 0 1px oklch(0.78 0.13 195 / 40%),
+      0 2px 18px -1px oklch(0.78 0.13 195 / 45%);
+    filter: brightness(1.06);
+  }
+
+  /* 侧边栏右边线：从青色渐隐到透明，作为"分隔带"的视觉锚点 */
+  .dark [data-slot="sidebar"] {
+    border-right-color: oklch(0.78 0.13 195 / 12%);
+  }
+}
+
+@media (min-width: 900px) {
+  [aria-label="Token 总览"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

@@ -1,0 +1,26 @@
+# 本机 Cargo 配置示例 —— 复制成 .cargo/config.toml 后按自己机器改路径。
+#
+# 什么时候需要它：
+#   有 Visual Studio Build Tools（含 MSVC 链接器）的人 **不需要** 这份配置，
+#   默认的 link.exe 就能用。只有满足下面两条时才需要显式指定 lld-link：
+#     1. 机器上没有安装 Visual Studio 的 C++ 构建工具；
+#     2. 又在 Git Bash 里构建 —— Git Bash 的 /usr/bin/link 会抢先被当成链接器，
+#        报 `link: extra operand '*.rlib'`。
+#
+# 复制后把路径改成本机 rustup 里那个文件：
+#   cp .cargo/config.toml.example .cargo/config.toml
+#   # 然后编辑 linker 一行
+#
+# 注意：
+#   - 不要加 `-Zunstable-options` / `-Clinker-flavor=msvc-lld`。lld 靠可执行
+#     文件名决定 flavor，叫 lld-link 就已经对了；那两个 flag 是 nightly 专属，
+#     而 tauri build 内部调 stable rustc，带上会直接失败。
+#   - 如果 nightly 工具链里没有 lld-link.exe，从 rust-lld.exe 复制一份：
+#       cp "$HOME/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/lib/rustlib/x86_64-pc-windows-msvc/bin/rust-lld.exe" \
+#          "$HOME/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/bin/lld-link.exe"
+#
+# scripts/build-exe-local.sh 在文件不存在时会尝试按上面的默认位置自动生成，
+# 生成不出来就走系统默认链接器（也就是有 MSVC 的正常情况）。
+
+[target.x86_64-pc-windows-msvc]
+linker = "C:/Users/<你的用户名>/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/bin/lld-link.exe"

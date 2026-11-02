@@ -1,0 +1,62 @@
+[package]
+name = "wb-switch-core"
+version = "1.0.5"
+edition = "2021"
+description = "wb-switch 核心逻辑（账号/切换/会话/签到/更新），不依赖 Tauri，可被桌面端与 HTTP server 复用"
+
+[dependencies]
+# "rc"：token 统计的缓存结果用 `Arc<Value>` 返回（避免命中缓存时深拷贝
+# 几十万行的 JSON）。serde 默认不给 Arc 实现 Serialize —— 之前能编译只是
+# 因为 tauri 的依赖链恰好开了 rc（feature unification），那是巧合。
+# 我们确实用到了这个能力，就该自己声明。
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net"] }
+# 内置网关：axum 提供 /v1 路由，tokio-stream 把上游分片桥成 axum 的 Body。
+axum = "0.7"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+uuid = { version = "1", features = ["v4"] }
+dirs = "5"
+chrono = "0.4"
+# backup：会话同步前用 SQLite 在线备份 API 生成一致快照，不直接 cp 活动库。
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+# 会话关联的内容版本（归一化行摘要 / 全文摘要）。不能改用 DefaultHasher：跨进程
+# 与跨版本都不稳定，无法作为持久化内容身份。
+sha2 = "0.10"
+
+# hub 原地升级：GitHub 只提供 tar.gz 发布包，要在进程内解开就得自带解压能力。
+# 纯 Rust 实现，不引入系统 tar/PowerShell —— 后者在受限环境里常被拦，
+# 且 Windows 上 tar 的行为随版本漂移。
+flate2 = "1"
+tar = "0.4"
+
+# CodeBuddy CN IDE Safe Storage (state.vscdb secret inject)
+aes = "0.8"
+cbc = "0.1"
+pbkdf2 = "0.12"
+sha1 = "0.10"
+aes-gcm = "0.10"
+base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+  # 按端口结束占用进程：需要枚举 TCP 连接表拿 PID，
+  # 再用 OpenProcess/TerminateProcess 关掉。纯 Win32 API，不依赖 taskkill。
+  "Win32_Networking_WinSock",
+  # TCP 连接表枚举（GetExtendedTcpTable）在 NetworkManagement::IpHelper 下，
+  # 必须单独开这个 feature —— 它不属于 WinSock，也不属于 ProcessStatus。
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_System_Threading",
+  "Win32_System_ProcessStatus",
+]}
+
+# Linux 密钥环：直接按 Secret Service D-Bus 协议读 Safe Storage 密码，不依赖
+# 默认不安装的 secret-tool（issue #80）。版本与 tauri 依赖图里已有的那份一致，
+# 不引入新的下载。
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5"
+

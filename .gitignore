@@ -1,0 +1,96 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+# build-exe-local.sh 的临时构建目录（绕开 vite 清空 dist 时的删除守卫）
+dist-vite/
+dist-build-*/
+# 内嵌网关的生成物：src-tauri/resources/gateway-hub/ 与 gateway-manifest.json
+# 由 scripts/prepare-embedded-hub.mjs 从 vendor/gateway-hub/ 生成，不入库。
+# （vendor/gateway-hub/ 本身要入库，否则构建无法复现。）
+src-tauri/resources/gateway-hub/
+src-tauri/resources/gateway-manifest.json
+public/companion/
+public/companion-demo/
+src-tauri/binaries/agent-studio-runtime-*
+*.local
+
+# Rust / Tauri 构建产物（workspace target）
+target/
+src-tauri/target/
+
+# 安装包与打包中间产物（只上传源码，安装包走 Releases）
+release/
+build/
+dist-bin/
+*.exe
+*.msi
+*.dmg
+*.deb
+*.AppImage
+*.AppImage.sig
+*.nsis.zip
+*.nsis.zip.sig
+
+# build-exe-local.sh 运行期的临时文件
+.tauri-pins
+
+# npm 包 postinstall 下载的平台二进制
+npm/bin/wb-switch-*
+
+# 本地运行时数据
+accounts.json
+backups/
+
+# 本地素材与浏览器调试残留
+video/
+.playwright-cli/
+.playwright-mcp/
+.pnpm-store/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+npm/platform/*/bin/
+
+# 个人开发工作流（trellis）
+.trellis/
+
+# AI 工具本地配置
+.codebuddy/
+.cursor/
+.agents/
+.codex/
+.grok/
+/.workbuddy/
+/AGENTS.md
+
+# updater 签名私钥（.keys/）——绝不能提交
+.keys/
+
+# 构建脚本把内嵌产物挪走后留下的备份目录（每次构建产生一个新的）
+vendor/agent-companion/dist-embed.old-*/
+
+# 构建时由 scripts/build-exe-local.sh 生成（置空 beforeBuildCommand 防递归）
+/src-tauri/tauri.windows.conf.json
+
+# 本机 Cargo 链接器配置：内容是绝对路径（指向本机 rustup 的 lld-link.exe），
+# 提交上去会让别人 clone 后直接构建失败。由 build-exe-local.sh 按当前机器
+# 自动生成；有 MSVC 构建工具的人不需要它，留空即走默认 link.exe。
+# 需要手动配置时参考 .cargo/config.toml.example。
+/.cargo/config.toml
