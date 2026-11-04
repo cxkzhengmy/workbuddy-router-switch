@@ -3,6 +3,7 @@ import {
   CircleAlert,
   Copy,
   Loader2,
+  Network,
   Play,
   Plus,
   RefreshCw,
@@ -151,6 +152,43 @@ export default function GatewayPage() {
       await refresh();
     } catch (error) {
       toast.error(`停止失败：${(error as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
+   * 开关局域网访问。
+   *
+   * 开启是不可逆的「风险动作」，先弹一次确认：这个网关没有用户体系，
+   * 一旦绑到 0.0.0.0，同网段拿到 Key 的人就能用本机账号的额度。
+   * 关闭则不需要确认——收紧权限永远不该被拦。
+   */
+  const onToggleLan = async (enabled: boolean) => {
+    if (enabled) {
+      const ok = window.confirm(
+        "开启后，同一局域网内的其它设备都能访问本机网关。\n" +
+          "网关只靠 API Key 鉴权，Key 泄露就等于账号额度泄露。\n\n" +
+          "请只在可信网络下开启。是否继续？",
+      );
+      if (!ok) return;
+    }
+    setBusy("lan");
+    try {
+      const res = await api.proxySetLanAccess(enabled);
+      if (!res.ok) {
+        toast.error(res.error ?? "切换失败");
+      } else if (res.restarted) {
+        toast.success(enabled ? "已开启局域网访问，网关已按新地址重启" : "已关闭局域网访问，网关已重启");
+      } else if (!res.status?.running) {
+        toast.success(enabled ? "已开启局域网访问，下次启动网关时生效" : "已关闭局域网访问");
+      } else {
+        toast.success(enabled ? "已开启局域网访问" : "已关闭局域网访问");
+      }
+      if (res.status) setStatus(res.status);
+      await refresh();
+    } catch (error) {
+      toast.error(`切换失败：${(error as Error).message}`);
     } finally {
       setBusy(null);
     }
@@ -340,6 +378,57 @@ export default function GatewayPage() {
               复制
             </Button>
             <Badge variant="secondary">{status?.keyCount ?? 0} 个 Key</Badge>
+          </div>
+
+          {/* 局域网访问：默认关闭，纯本机。开启后同网段设备（手机 / 另一台电脑）
+              才能连进来，代价是账号能力暴露面变大，所以文案要把代价说清楚。 */}
+          <div className="rounded-md border bg-muted/30 px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Network className="size-3.5 text-muted-foreground" />
+                <span className="text-xs font-medium">允许局域网访问</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {status?.lanAccess ? "监听 0.0.0.0，同网段设备可连" : "仅本机 127.0.0.1 可连"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {busy === "lan" && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+                <Switch
+                  checked={!!status?.lanAccess}
+                  disabled={busy !== null}
+                  onCheckedChange={(checked) => void onToggleLan(checked)}
+                  aria-label="允许局域网访问"
+                />
+              </div>
+            </div>
+
+            {status?.lanAccess && (
+              <div className="mt-2 space-y-2 border-t border-amber-500/30 pt-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground">
+                    {status.running ? "其它设备填这个地址" : "启动后其它设备填这个地址"}
+                  </span>
+                  <code className="rounded border bg-background px-2 py-0.5 font-mono text-xs">
+                    {status.lanUrl ?? "未识别到局域网 IP，请用 ipconfig 查看"}
+                  </code>
+                  {status.lanUrl && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => void copy(status.lanUrl ?? "", "局域网地址已复制")}
+                    >
+                      <Copy className="size-3" />
+                      复制
+                    </Button>
+                  )}
+                </div>
+                <p className="text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+                  同网段任何设备都能访问本网关，仍需要 Bearer Key —— 别把 Key 给不可信的人。
+                  首次开启时 Windows 会弹防火墙提示，需勾选「专用网络」并允许，否则其它设备仍然连不上。
+                </p>
+              </div>
+            )}
           </div>
 
           {!status?.running && (

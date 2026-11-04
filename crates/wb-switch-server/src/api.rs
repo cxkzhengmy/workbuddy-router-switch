@@ -219,6 +219,7 @@ pub fn router() -> Router {
         .route("/api/proxy/status", get(api_proxy_status))
         .route("/api/proxy/start", post(api_proxy_start))
         .route("/api/proxy/stop", post(api_proxy_stop))
+        .route("/api/proxy/network/lan", post(api_proxy_set_lan_access))
         .route("/api/proxy/overview", post(api_proxy_overview))
         .route("/api/proxy/models", post(api_proxy_models))
         .route("/api/proxy/credits", post(api_proxy_credits))
@@ -1838,6 +1839,16 @@ async fn api_proxy_start() -> Response {
 async fn api_proxy_stop() -> Response {
     proxy::shutdown();
     json_ok(json!({ "ok": true }))
+}
+
+/// 开关网关的局域网访问。缺 `enabled` 时按 false 处理——宁可关掉，
+/// 也不要因为一个残缺请求把端口放开到整个网段。
+async fn api_proxy_set_lan_access(Json(body): Json<Value>) -> Response {
+    let enabled = body.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+    match proxy::set_lan_access(enabled).await {
+        Ok(value) => json_ok(value),
+        Err(err) => json_err(err, StatusCode::BAD_REQUEST),
+    }
 }
 
 fn proxy_port() -> u16 {

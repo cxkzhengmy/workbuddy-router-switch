@@ -6,10 +6,15 @@
 //! 而每多一项就多一处与上游协议漂移的维护面。
 //!
 //! 账号来源：始终跟随项目里「当前激活账号」，切号立即生效，不额外维护一份账号池。
+//!
+//! 监听范围由 `network` 模块决定：默认只绑回环，用户显式开启后绑 `0.0.0.0`
+//! 供局域网内的其它设备使用。改开关会按新地址重绑监听器（见
+//! [`set_lan_access`]），不做「下次启动才生效」这种半吊子状态。
 
 pub mod account;
 pub mod catalog;
 pub mod external;
+pub mod network;
 pub mod server;
 pub mod store;
 pub mod upstream;
@@ -26,7 +31,13 @@ pub const DEFAULT_PORT: u16 = 8788;
 
 struct Running {
     port: u16,
+    /// 当前监听范围。与配置分开存：配置可以随时改，真正生效的是这一份。
+    lan: bool,
     tx: watch::Sender<bool>,
+    /// 持有任务句柄是为了「改监听地址」时能立刻丢弃旧 listener。
+    /// 只发 shutdown 信号走优雅退出的话，正开着的 SSE 流会把端口一直占住，
+    /// 新 listener 绑不上同一个端口。
+    handle: tokio::task::JoinHandle<()>,
     started_at: Instant,
 }
 
@@ -55,23 +66,40 @@ pub fn current_port() -> u16 {
 }
 
 /// 启动网关。已启动时幂等返回。
+///
+/// 监听地址取自持久化的网络策略：默认 `127.0.0.1`，用户开启局域网访问后
+/// 变成 `0.0.0.0`。开机自启与手动点「启动」走的是同一条路径，所以两边
+/// 行为不会漂移。
 pub async fn start(port: u16) -> Result<Value, String> {
     if is_running() {
         return Ok(json!({
             "ok": true,
             "alreadyRunning": true,
             "port": current_port(),
+            "lanAccess": running()
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().map(|r| r.lan))
+                .unwrap_or_else(network::lan_access),
         }));
     }
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+    let lan = network::lan_access();
+    let host = network::bind_host(lan);
+    let listener = tokio::net::TcpListener::bind((host, port))
         .await
-        .map_err(|e| format!("端口 {port} 被占用，无法启动网关：{e}"))?;
+        .map_err(|e| {
+            if lan {
+                format!("端口 {port} 无法在局域网模式（{host}）下监听：{e}")
+            } else {
+                format!("端口 {port} 被占用，无法启动网关：{e}")
+            }
+        })?;
     let (tx, rx) = watch::channel(false);
     // 每次启动领一个代号：服务退出时只清理自己那一轮的状态。
     // 否则「停止 → 立即启动」时，旧任务收尾会把新实例的 Running 抹掉，
     // 界面变成「未运行」但端口其实在监听。
     let generation = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         if let Err(err) = server::serve_listener(listener, rx).await {
             eprintln!("[proxy] 服务退出：{err}");
         }
@@ -84,7 +112,9 @@ pub async fn start(port: u16) -> Result<Value, String> {
     if let Ok(mut guard) = running().lock() {
         *guard = Some(Running {
             port,
+            lan,
             tx,
+            handle,
             started_at: Instant::now(),
         });
     }
@@ -92,7 +122,12 @@ pub async fn start(port: u16) -> Result<Value, String> {
     // 等端口真正可用再返回，避免界面显示「已启动」但第一个请求就连接被拒。
     for _ in 0..40 {
         if probe_health(port).await {
-            return Ok(json!({ "ok": true, "port": port, "alreadyRunning": false }));
+            return Ok(json!({
+                "ok": true,
+                "port": port,
+                "alreadyRunning": false,
+                "lanAccess": lan,
+            }));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -101,20 +136,74 @@ pub async fn start(port: u16) -> Result<Value, String> {
         "ok": true,
         "port": port,
         "alreadyRunning": false,
+        "lanAccess": lan,
         "warning": "服务已监听但健康检查未通过，请检查账号状态",
     }))
 }
 
 /// 停止网关。同步接口，供应用退出钩子直接调用。
 pub fn shutdown() {
-    if let Ok(mut guard) = running().lock() {
-        if let Some(run) = guard.take() {
-            let _ = run.tx.send(true);
-        }
+    stop_listener();
+}
+
+/// 丢弃当前监听器。
+///
+/// 直接 `abort` 而不是只发优雅退出信号：改监听地址时必须立刻释放端口，
+/// 否则 `0.0.0.0` 与旧的 `127.0.0.1` 会抢同一个端口，新监听器绑不上。
+pub fn stop_listener() {
+    let taken = running().lock().ok().and_then(|mut guard| guard.take());
+    if let Some(run) = taken {
+        let _ = run.tx.send(true);
+        run.handle.abort();
     }
     // 代号推进一格：让正在收尾的旧任务知道「已经不是我这一轮了」，
     // 不要回来清理状态。
     GENERATION.fetch_add(1, Ordering::Relaxed);
+}
+
+/// 开关局域网访问。
+///
+/// 改完配置后若网关正在运行，会按新地址重绑一次——用户点一下开关就该
+/// 立刻能用，而不是「先关再开」两步走。重绑失败不回滚配置：用户的意图
+/// 已经明确保存，失败原因（多半是端口被别的进程抢了）需要他自己看到，
+/// 悄悄改回去反而更让人困惑。
+pub async fn set_lan_access(enabled: bool) -> Result<Value, String> {
+    let before = network::lan_access();
+    network::save_lan_access(enabled)?;
+
+    if before == enabled || !is_running() {
+        return Ok(json!({
+            "ok": true,
+            "restarted": false,
+            "status": status(),
+        }));
+    }
+
+    let port = current_port();
+    stop_listener();
+    let mut last = String::new();
+    for _ in 0..30 {
+        match start(port).await {
+            Ok(_) => {
+                return Ok(json!({
+                    "ok": true,
+                    "restarted": true,
+                    "status": status(),
+                }))
+            }
+            Err(err) => {
+                last = err;
+                // 旧 listener 的释放是异步的，重绑要给它一点时间。
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+    Ok(json!({
+        "ok": false,
+        "restarted": false,
+        "error": format!("设置已保存，但网关没能按新地址重新启动：{last}"),
+        "status": status(),
+    }))
 }
 
 async fn probe_health(port: u16) -> bool {
@@ -131,14 +220,24 @@ async fn probe_health(port: u16) -> bool {
 }
 
 /// 运行状态（界面顶部卡片）。
+///
+/// `lanAccess` 优先取「正在跑的那份」，未运行时取配置——两者在正常情况下
+/// 一致，不一致只出现在「改了配置但重绑失败」，这时界面该显示实际状态。
 pub fn status() -> Value {
     let guard = running().lock().ok();
     let info = guard.as_ref().and_then(|g| g.as_ref());
     let port = info.map(|r| r.port).unwrap_or(DEFAULT_PORT);
+    let lan = info.map(|r| r.lan).unwrap_or_else(network::lan_access);
+    // 只有真开了局域网才去探本机地址：不开启时它没有意义，白算一次路由。
+    let lan_ip = if lan { network::lan_ip() } else { None };
     json!({
         "running": info.is_some(),
         "port": port,
         "baseUrl": format!("http://127.0.0.1:{port}/v1"),
+        "lanAccess": lan,
+        "bindHost": network::bind_host(lan),
+        "lanIp": lan_ip,
+        "lanUrl": lan_ip.map(|ip| format!("http://{ip}:{port}/v1")),
         "keyCount": store::key_count(),
         "uptimeSecs": info.map(|r| r.started_at.elapsed().as_secs()).unwrap_or(0),
     })

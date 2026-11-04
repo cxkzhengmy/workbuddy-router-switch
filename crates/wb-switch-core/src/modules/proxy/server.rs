@@ -3,8 +3,9 @@
 //! 只实现 Chat Completions 与 Models 两个面——`/v1/responses`、`/v1/messages`
 //! 的协议差异（事件模型、thinking 块）会成倍放大维护面，本项目用不到。
 //!
-//! 服务只监听回环地址：它是一个本地代理，没有鉴权之外的访问控制，绑 0.0.0.0
-//! 等于把账号能力暴露给整个局域网。
+//! 服务默认只监听回环地址：它是一个本地代理，没有鉴权之外的访问控制，绑
+//! 0.0.0.0 等于把账号能力暴露给整个局域网。确实需要局域网访问时，由用户在
+//! 「网关」页显式打开开关（见 [`super::network`]），绑定地址随之改变。
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -149,18 +150,10 @@ pub fn router() -> Router<SharedState> {
         })
 }
 
-/// 启动服务，`shutdown` 收到任何变更即优雅退出。
-pub async fn serve(port: u16, shutdown: watch::Receiver<bool>) -> Result<(), String> {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .map_err(|e| format!("端口 {port} 无法监听：{e}"))?;
-    serve_listener(listener, shutdown).await
-}
-
 /// 用已绑定的 listener 提供服务。
 ///
-/// 拆出这一层是为了让 `start()` 能在真正 spawn 之前拿到 bind 错误——否则
-/// 「端口被占用」会变成任务内部的 eprintln，界面只能看到探测超时。
+/// 绑定地址不在这里决定：`start()` 按网络策略先绑好再交给本函数，这样
+/// 「端口被占用」能在 spawn 之前就以 `Err` 返回，界面不用等探测超时。
 pub async fn serve_listener(
     listener: tokio::net::TcpListener,
     mut shutdown: watch::Receiver<bool>,

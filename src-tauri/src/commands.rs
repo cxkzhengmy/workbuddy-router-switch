@@ -1505,6 +1505,12 @@ pub async fn proxy_stop() -> Result<Value, String> {
     Ok(json!({ "ok": true }))
 }
 
+/// 开关网关的局域网访问。运行中会自动按新地址重绑监听器。
+#[tauri::command]
+pub async fn proxy_set_lan_access(enabled: bool) -> Result<Value, String> {
+    proxy::set_lan_access(enabled).await
+}
+
 /// 统计概览：今日 / 累计 / 按模型速度 / 按天趋势 / 最近请求。
 #[tauri::command]
 pub async fn proxy_overview(days: Option<i64>) -> Result<Value, String> {

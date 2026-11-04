@@ -1050,7 +1050,16 @@ export interface VscodeSessionList {
 export interface ProxyStatus {
   running: boolean;
   port: number;
+  /** 本机客户端用的地址，始终是 127.0.0.1。 */
   baseUrl: string;
+  /** 是否允许局域网访问（绑 0.0.0.0 而不是回环）。 */
+  lanAccess: boolean;
+  /** 实际监听地址：`127.0.0.1` 或 `0.0.0.0`。 */
+  bindHost: string;
+  /** 本机局域网 IPv4；无网卡或识别失败时为 null。 */
+  lanIp: string | null;
+  /** 局域网设备应使用的 base_url；`lanIp` 缺失时为 null。 */
+  lanUrl: string | null;
   keyCount: number;
   uptimeSecs: number;
 }

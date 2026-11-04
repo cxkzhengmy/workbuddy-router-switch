@@ -121,6 +121,7 @@ const ROUTES: Record<string, Route> = {
   proxy_status: { method: "GET", path: "/api/proxy/status" },
   proxy_start: { method: "POST", path: "/api/proxy/start" },
   proxy_stop: { method: "POST", path: "/api/proxy/stop" },
+  proxy_set_lan_access: { method: "POST", path: "/api/proxy/network/lan" },
   proxy_overview: { method: "POST", path: "/api/proxy/overview" },
   proxy_models: { method: "POST", path: "/api/proxy/models" },
   proxy_credits: { method: "POST", path: "/api/proxy/credits" },
@@ -1158,12 +1159,33 @@ export function proxyStatus(): Promise<ProxyStatus> {
   return call("proxy_status");
 }
 
-export function proxyStart(): Promise<{ ok: boolean; port: number; warning?: string }> {
+export function proxyStart(): Promise<{
+  ok: boolean;
+  port: number;
+  lanAccess?: boolean;
+  warning?: string;
+}> {
   return call("proxy_start");
 }
 
 export function proxyStop(): Promise<{ ok: boolean }> {
   return call("proxy_stop");
+}
+
+/**
+ * 开关网关的局域网访问。
+ *
+ * 网关运行中时后端会按新地址重绑监听器，`restarted=true` 表示已经生效；
+ * `ok=false` 表示配置已存下但重绑失败（端口被别的进程抢了之类），
+ * 这时网关处于停止状态，需要用户自己重新启动。
+ */
+export function proxySetLanAccess(enabled: boolean): Promise<{
+  ok: boolean;
+  restarted: boolean;
+  error?: string;
+  status: ProxyStatus;
+}> {
+  return call("proxy_set_lan_access", { enabled });
 }
 
 /** 统计概览：今日 / 累计 / 按模型速度 / 按天趋势 / 最近请求。 */

@@ -322,6 +322,7 @@ pub fn run() {
             commands::proxy_status,
             commands::proxy_start,
             commands::proxy_stop,
+            commands::proxy_set_lan_access,
             commands::proxy_overview,
             commands::proxy_models,
             commands::proxy_credits,
