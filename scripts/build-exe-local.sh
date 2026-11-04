@@ -26,6 +26,25 @@ cd "$ROOT"
 
 TARGET="x86_64-pc-windows-msvc"
 
+# 产物里不该出现本机的绝对路径。
+# debug 构建会把 `C:\Users\<用户名>\.cargo\registry\...` 和仓库绝对路径写进
+# panic 位置与调试信息，发布出去的 exe 用 `strings`（或编辑器打开）就能翻出
+# 用户名和本机目录结构。release 也未必干净——panic 位置里的路径同样来自
+# 编译期的 `file!()`。
+#
+# 统一重映射成中性前缀。用 CARGO_ENCODED_RUSTFLAGS（\x1f 分隔）而不是
+# RUSTFLAGS：后者按空格切分参数，路径里带空格（"C:\Users\John Doe"）
+# 会直接散架。
+if command -v cygpath >/dev/null 2>&1; then
+  _cargo_home="$(cygpath -m "$HOME/.cargo")"
+  _src_root="$(cygpath -m "$ROOT")"
+  CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=${_cargo_home}=C:/cargo"
+  CARGO_ENCODED_RUSTFLAGS+=$'\x1f'"--remap-path-prefix=${_src_root}=C:/src"
+  export CARGO_ENCODED_RUSTFLAGS
+  echo "    路径重映射：$_cargo_home -> C:/cargo"
+  echo "                $_src_root -> C:/src"
+fi
+
 echo "==> [1/6] 校验构建前置"
 if [ ! -f "$HOME/.wb-switch/wb-switch-updater.key" ]; then
   echo "    生成 updater 自签名密钥（仅供本地自测，不能用于正式发布）"
