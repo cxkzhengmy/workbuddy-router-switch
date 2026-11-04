@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "WorkBuddy Router",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "identifier": "com.wbrouter.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:desktop",
@@ -47,11 +47,13 @@
     "externalBin": ["binaries/agent-studio-runtime"]
   },
   "plugins": {
-    "//updater": "故意禁用。原先指向官方仓库的上游发布页，但那是**未内嵌网关**的原版——用户点「检查更新」会装上一个网关功能消失的版本。pubkey 也是上游的，本项目自签的包同样装不上。方案 A 落地后 hub 已可独立更新，不再需要这个坏功能。重新启用需先 cargo tauri signer generate 生成自己的密钥对，并把 endpoints 换成本项目发布源。",
+    "//updater": "本项目自有的更新通道：清单 latest.json 与安装包都发布在本仓库的 release 上。pubkey 必须是本机 $HOME/.wb-switch/wb-switch-updater.key 对应的公钥（base64 的 minisign 公钥文本），否则 bundler 会警告签名与公钥不匹配，下载回来的包也验签失败。真正的开关在 src-tauri/src/update_service.rs 的 UPDATER_ENABLED，两边要一起开。",
     "updater": {
-      "active": false,
-      "//": "pubkey 是 Tauri bundler 的**必填字段**（active=false 也会被解析），且必须是 base64 的 minisign 公钥文本，全 0 或纯 ASCII 都不行（报 invalid utf-8 / Base64 conversion failed，均实测）。这里是本项目自己生成的密钥对之公钥——真正的开关在 src-tauri/src/update_service.rs 的 UPDATER_ENABLED，后台与手动检查都在那里短路。",
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYwNEU4RkQ5OEZCN0FGRApSV1Q5ZXZ1WS9lZ0VEd1VuVFpOYjU1OGJGd1NmMVhaWHJTSEdnNVRSSEcweUxWR05TN0h2WnloSwo="
+      "active": true,
+      "endpoints": [
+        "https://github.com/cxkzhengmy/workbuddy-router-switch/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQzNzgwN0JBMDM5QzUxMjUKUldRbFVad0R1Z2Q0UTlnSnZLTldUZGxPTllCZFA1NUVWUngrTHRJVzdkMnNadHY3Y3hXYXV5K2wK"
     }
   }
 }

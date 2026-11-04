@@ -111,4 +111,7 @@ esac
 dest="$WORKROOT/release/workbuddy-router-${ver}-setup.exe"
 cp "$exe" "$dest" || die "复制安装包失败"
 ok "安装包：$dest ($(du -m "$dest" | cut -f1) MB)"
-printf '    安装：双击它。应用内自动更新已禁用（UPDATER_ENABLED=false）。\n\n'
+printf '    安装：双击它。应用内自动更新已开启，发版时记得同时上传 latest.json。\n'
+printf '    生成清单：UPDATE_OS=windows UPDATE_ARCH=x86_64 UPDATE_JSON_NAME=latest.json \\\n'
+printf '              UPDATE_ARCHIVE_NAME=workbuddy-router-%s-setup.exe \\\n' "$ver"
+printf '              bash scripts/gen-update-json.sh cxkzhengmy workbuddy-router-switch\n\n'

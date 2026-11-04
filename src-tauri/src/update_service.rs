@@ -31,17 +31,19 @@ pub const CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
 /// 自动更新总开关。
 ///
-/// 本项目（workbuddy-router）已彻底脱离上游 workbuddy-switch，不做自动更新：
-/// 上游发布页是没有内嵌网关的原版，装上去等于把网关功能弄丢。
+/// 本项目（workbuddy-router）已彻底脱离上游 workbuddy-switch，改用**自建**的
+/// 更新通道：清单与安装包都发布在 `cxkzhengmy/workbuddy-router-switch` 的
+/// release 上，签名密钥是本机 `.wb-switch/wb-switch-updater.key`，公钥写在
+/// `tauri.conf.json` 的 `plugins.updater.pubkey`。
 ///
-/// 为什么需要这个常量：tauri.conf.json 里的 `active: false` 只让 Tauri 的
-/// updater 插件不工作，**管不到本文件的后台检查循环**——那是我自己写的，
-/// 每 30 分钟调一次 `check()`，而 check() 会走 GitHub。配置文件里的开关
-/// 管不到自己写的循环，必须在这里短路。
+/// 为什么这里还需要一个常量：`tauri.conf.json` 里的 `active` 只决定 Tauri 的
+/// updater 插件是否工作，**管不到本文件的后台检查循环**——那是我自己写的，
+/// 每 30 分钟调一次 `check()`。两处开关必须同时打开，配置改了这里不改，
+/// 表现就是「手动检查能查、后台永远不提醒」，很难查。
 ///
 /// hub（workbuddy2api-hub）是**另一条独立的更新路径**，不受此开关影响：
 /// 它由 `wb_switch_core::modules::gateway_update` 处理，在界面上手动触发。
-pub const UPDATER_ENABLED: bool = false;
+pub const UPDATER_ENABLED: bool = true;
 
 const BUSY_MESSAGE: &str = "更新任务正在进行中，请稍候";
 const NO_PACKAGE_MESSAGE: &str = "没有可安装的更新包，请先下载更新包";
@@ -303,12 +305,10 @@ fn should_rebuild_menu(percent: u8) -> bool {
 ///
 /// 已有更新任务在跑时直接返回忙碌错误，不并发触发第二次检查。
 pub async fn check<R: Runtime>(app: &AppHandle<R>, proxy: Option<&str>, force: bool) -> Value {
-    // 自动更新已禁用时，手动「检查更新」也要短路——否则用户点一下就会
-    // 去访问 GitHub，而那里是没有内嵌网关的上游发布页。
-    // 明确报「已禁用」而不是静默无反应，让用户知道发生了什么。
+    // 开关关闭时，手动「检查更新」也要短路：明确报「已关闭」而不是静默
+    // 无反应，让用户知道发生了什么，而不是以为网络坏了。
     if !UPDATER_ENABLED {
-        let message = "自动更新已禁用：本应用为独立版本，不再从上游获取更新。\
-                       如需升级 hub，请到「网关」页用「检查更新」。";
+        let message = "自动更新已关闭（本机配置）。如需新版安装包，请到发布页手动下载。";
         eprintln!("[更新] {message}");
         return json!({
             "ok": false,
@@ -448,17 +448,11 @@ pub async fn restart<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
 /// 常驻循环随进程存活，轻量模式（WebView 销毁）与主窗口关闭时同样在跑；
 /// 未带 force 走 core 的 6 小时缓存，因此多数轮次不发网络请求。
 pub fn spawn_periodic_check(app: AppHandle) {
-    // 本项目已彻底独立，不再向上游查更新。
-    //
-    // 之前只在 tauri.conf.json 里写了 `active: false`，但那只影响 Tauri 的
-    // updater 插件本身；**这个后台循环照样每 CHECK_INTERVAL 跑一次 check()**，
-    // 而 check() 会走 core 的 update_check → load_github_config()，也就是仍在
-    // 定时访问 GitHub。配置文件里的开关管不到这里，必须在代码里短路。
-    //
-    // 将来要恢复自动更新：删掉这段短路 + 在 tauri.conf.json 里填自己的
-    // pubkey 与 endpoints，并把 GITHUB_OWNER/REPO 指向自己的仓库。
+    // 开关关掉时连循环都不启动：否则每 CHECK_INTERVAL 都会白跑一次 check()，
+    // 而 check() 会走 core 的 update_check → 真的去访问 GitHub。
+    // 配置文件里的 `active` 管不到这个自己写的循环，所以必须有这层短路。
     if !UPDATER_ENABLED {
-        eprintln!("[更新] 自动更新已禁用（本项目独立发布），不启动后台检查");
+        eprintln!("[更新] 自动更新已关闭，不启动后台检查");
         return;
     }
     tauri::async_runtime::spawn(async move {

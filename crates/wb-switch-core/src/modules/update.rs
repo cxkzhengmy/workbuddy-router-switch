@@ -22,15 +22,14 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 更新检查的目标仓库。
 ///
-/// 本项目已于 2026-10 完全脱离上游 workbuddy-switch：代码不再从上游拉取，
-/// 应用内updater 也已禁用（见 tauri.conf.json 的 plugins.updater）。
-/// 这里保留常量是因为「关于与更新」页面仍会读它来显示版本信息，
-/// 而用户可以从设置里覆盖成自己的仓库。
+/// 本项目（workbuddy-router）有自己的发布页，更新的清单（`latest.json`）与
+/// 安装包都发在这里。**不要指回上游 workbuddy-switch**：那是没有内嵌网关的
+/// 原版，装上去等于把网关功能弄丢，而且签名密钥也对不上。
 ///
-/// 留空字符串是刻意的：**默认值不指向任何人**。这样即使将来有人重新
-/// 启用 updater，也不会默认去问上游要更新（那是别人的仓库，且不带内嵌网关）。
-pub const GITHUB_OWNER: &str = "";
-pub const GITHUB_REPO: &str = "";
+/// 用户仍可在设置里把 `github_config.json` 的 owner/repo 覆写成自己的仓库
+/// （fork 后自建发布源），这里只是默认值。
+pub const GITHUB_OWNER: &str = "cxkzhengmy";
+pub const GITHUB_REPO: &str = "workbuddy-router-switch";
 
 /// 成功结果缓存有效期（6 小时）。自动轮询（30 分钟）命中缓存，不发网络请求；
 /// 设置页手动检查传 force=true 绕过缓存强制刷新。
@@ -75,8 +74,13 @@ pub fn load_github_config() -> Value {
             }
         }
     }
-    // 旧版本截图/配置曾使用 changexbc/wb-switch；迁移到实际公开仓库。
-    if owner == "changexbc" && repo == "wb-switch" {
+    // 老配置里可能写着上游仓库（`changexbc/*`，含早期的 wb-switch 与后来的
+    // workbuddy-switch）。上游是**没有内嵌网关**的另一款产品，包也不是本项目
+    // 签的：留在配置里会让检查结果指向别人的 release，而下载端点用的是
+    // tauri.conf.json 里的本项目地址，两者一错位，用户只会看到「安装失败」。
+    // 遇到就静默迁移到本项目仓库，并把配置写回去。
+    if owner == "changexbc" {
+        owner = GITHUB_OWNER.to_string();
         repo = GITHUB_REPO.to_string();
         should_normalize = true;
     }
@@ -355,12 +359,15 @@ mod tests {
         );
     }
 
-    /// 独立版不应再指向官方 updater。
+    /// updater 必须指向**本项目**的发布源，且带一对能用的公钥。
     ///
-    /// 上游原版**没有内嵌网关**，一旦用户点「检查更新」就会装上一个网关功能
-    /// 消失的版本；且上游 pubkey 无法校验自签包。宁可显式禁用，也不能留着。
+    /// 三个字段任何一处漏改，症状都很隐蔽：
+    /// - `active: false` → 手动检查能查出版本，但下载/安装永远不动；
+    /// - endpoints 缺省 → 插件不知道去哪取清单；
+    /// - pubkey 是上游的 → bundler 警告「签名与公钥不匹配」，下载回来的包
+    ///   验签失败，用户只看到「安装失败」四个字。
     #[test]
-    fn updater_is_disabled() {
+    fn updater_points_at_own_repo_with_real_pubkey() {
         let conf_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../src-tauri/tauri.conf.json");
         let text = std::fs::read_to_string(&conf_path).unwrap();
@@ -368,49 +375,60 @@ mod tests {
         let updater = &v["plugins"]["updater"];
         assert_eq!(
             updater.get("active").and_then(Value::as_bool),
-            Some(false),
-            "updater 未显式禁用"
+            Some(true),
+            "updater 未启用"
         );
-        // 只看真正的配置字段，**不看注释**——配置里的 `//updater` 说明文字
-        // 为了讲清为什么禁用，会提到上游仓库名，早先按整段字符串搜会误判。
-        //
-        // 注意 endpoints 必须删掉，而 pubkey **必须留着**（哪怕是占位值）：
-        // Tauri bundler 会解析整个 updater 块，`active: false` 只让插件不工作，
-        // 不等于「不解析」。删掉 pubkey 会在打包阶段报：
-        //   failed to build bundler settings: missing field `pubkey`
-        // 真正的开关在 src-tauri/src/update_service.rs 的 UPDATER_ENABLED。
-        for key in ["endpoints", "url"] {
-            assert!(
-                updater.get(key).is_none(),
-                "updater 仍残留 {key}：应彻底删除而不是留着失效"
-            );
-        }
+
+        let expected = format!(
+            "https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest/download/latest.json"
+        );
+        let endpoints = updater
+            .get("endpoints")
+            .and_then(Value::as_array)
+            .expect("endpoints 缺失：插件不知道该去哪取更新清单");
         assert!(
-            updater.get("pubkey").and_then(Value::as_str).is_some(),
-            "pubkey 是 bundler 必填项，删掉会在打包阶段失败"
+            endpoints
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|url| url == expected),
+            "endpoints 必须包含本项目清单地址 {expected}，实际 {endpoints:?}"
+        );
+
+        // pubkey 是 bundler 的必填项，而且必须是 base64 的 minisign 公钥文本
+        // （全 0 或纯 ASCII 会分别报 invalid utf-8 / Base64 conversion failed）。
+        let pubkey = updater
+            .get("pubkey")
+            .and_then(Value::as_str)
+            .expect("pubkey 是 bundler 必填项，删掉会在打包阶段失败");
+        let decoded = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            pubkey.as_bytes(),
+        )
+        .expect("pubkey 不是合法 base64");
+        let public_text = String::from_utf8(decoded).expect("pubkey 必须是 minisign 公钥文本");
+        assert!(
+            public_text.starts_with("untrusted comment: minisign public key"),
+            "pubkey 不是 minisign 公钥：{public_text}"
         );
     }
 
-    /// 自动更新必须在**代码层**也短路，不能只靠配置文件。
+    /// 自动更新开关必须在**配置与代码两边**同时打开。
     ///
-    /// `active: false` 只让 Tauri 的 updater 插件不工作，而后台定时检查是
-    /// 我们自己写的循环（`update_service::spawn_periodic_check`），
-    /// 它照样每 30 分钟调 `check()` → 走 GitHub。配置里的开关管不到
-    /// 自己写的循环 —— 必须在代码里也有开关。
-    ///
-    /// 这条测试就是为那个盲区加的：光看配置会以为「已经禁用了」。
+    /// `active: true` 只让 Tauri 的 updater 插件工作，而后台定时检查是自己写的
+    /// 循环（`update_service::spawn_periodic_check`）。只改配置不改常量，表现是
+    /// 「手动检查能查、后台永远不提醒」，很难查；只改常量不改配置则相反。
     #[test]
-    fn background_update_is_disabled_in_code() {
+    fn background_update_switch_is_on_and_gated() {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../src-tauri/src/update_service.rs"),
         )
         .expect("读不到 update_service.rs");
         assert!(
-            src.contains("pub const UPDATER_ENABLED: bool = false;"),
-            "UPDATER_ENABLED 必须为 false（自动更新已禁用）"
+            src.contains("pub const UPDATER_ENABLED: bool = true;"),
+            "UPDATER_ENABLED 必须为 true，否则后台检查与手动检查都会被短路"
         );
-        // 后台循环入口处必须有该常量的短路判断。
+        // 循环入口必须仍受这个常量约束（将来要临时关掉时只改常量就够）。
         let body = src
             .split("pub fn spawn_periodic_check")
             .nth(1)
@@ -418,47 +436,56 @@ mod tests {
         let head: String = body.chars().take(700).collect();
         assert!(
             head.contains("UPDATER_ENABLED"),
-            "spawn_periodic_check 里必须用 UPDATER_ENABLED 短路，\
-             否则后台仍会定时访问 GitHub"
+            "spawn_periodic_check 里必须用 UPDATER_ENABLED 短路"
         );
     }
 
-    /// 代码里不得再硬编码上游仓库 —— 本项目已彻底独立。
+    /// 默认更新源必须锁在本项目仓库。
     ///
-    /// 为什么这条值得锁：updater 虽已禁用，但 `load_github_config()` 仍以
-    /// 这两个常量作默认值。一旦有人日后重新启用更新功能，默认值会悄悄
-    /// 指回别人的仓库，而且不会有任何提示——用户只会看到「发现新版本」，
-    /// 装上后才发现自己降级成了没有内嵌网关的版本。
+    /// 为什么值得锁：`load_github_config()` 以这两个常量作默认值。一旦被改回
+    /// 上游，用户只会看到「发现新版本」，装上后才发现网关功能消失了。
     #[test]
-    fn no_upstream_repo_is_hardcoded() {
-        assert!(
-            GITHUB_OWNER.is_empty() && GITHUB_REPO.is_empty(),
-            "GITHUB_OWNER/REPO 不应指向任何仓库（当前 {}/{GITHUB_REPO}）",
-            GITHUB_OWNER
+    fn default_repo_points_at_own_release() {
+        assert_eq!(
+            (GITHUB_OWNER, GITHUB_REPO),
+            ("cxkzhengmy", "workbuddy-router-switch"),
+            "默认更新源必须是本项目仓库"
         );
+        assert_ne!(GITHUB_OWNER, "changexbc", "不能指回上游仓库");
     }
 
+    /// macOS 的 `os` 与 `os_slug` 相同，若不加判断会追加一份与主端点
+    /// 重复的 `latest-macos-<arch>.json`，白跑一次请求。
     #[test]
     fn updater_manifest_urls_macos_skips_duplicate_fallback() {
-        let urls = updater_manifest_urls("changexbc", "workbuddy-switch", "macos", "aarch64");
+        let urls = updater_manifest_urls(GITHUB_OWNER, GITHUB_REPO, "macos", "aarch64");
+        let base = format!(
+            "https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest/download"
+        );
         assert_eq!(
             urls,
             vec![
-                "https://github.com/example/placeholder-repo/releases/latest/download/latest.json",
-                "https://github.com/example/placeholder-repo/releases/latest/download/latest-macos-aarch64.json",
-            ]
+                format!("{base}/latest.json"),
+                format!("{base}/latest-macos-aarch64.json"),
+            ],
+            "macOS 不该再追加一份重复的清单地址"
         );
     }
 
+    /// Windows 仍要兜底问一次 `latest-macos-<arch>.json`：早期安装包里把
+    /// 平台后缀写死成了 macos，删掉这个兜底会让那批用户的清单请求 404。
     #[test]
     fn updater_manifest_urls_windows_keeps_macos_compat() {
-        let urls = updater_manifest_urls("changexbc", "workbuddy-switch", "windows", "x86_64");
+        let urls = updater_manifest_urls(GITHUB_OWNER, GITHUB_REPO, "windows", "x86_64");
+        let base = format!(
+            "https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest/download"
+        );
         assert_eq!(
             urls,
             vec![
-                "https://github.com/example/placeholder-repo/releases/latest/download/latest.json",
-                "https://github.com/example/placeholder-repo/releases/latest/download/latest-windows-x86_64.json",
-                "https://github.com/example/placeholder-repo/releases/latest/download/latest-macos-x86_64.json",
+                format!("{base}/latest.json"),
+                format!("{base}/latest-windows-x86_64.json"),
+                format!("{base}/latest-macos-x86_64.json"),
             ]
         );
     }
