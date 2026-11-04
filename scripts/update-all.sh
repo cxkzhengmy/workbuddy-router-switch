@@ -47,13 +47,18 @@ is_wsl() { grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; }
 if is_wsl; then
   die "当前 bash 是 WSL，本脚本需要 Git Bash。
   WSL 的路径是 /mnt/d/...，且没有 tasklist / cmd //c 等 Windows 命令。
-  请改用 Git Bash 运行，或直接在 cmd 里用完整路径：
-    \"C:\\Program Files\\Git\\bin\\bash.exe\" -lc \"cd /d/a_s_s/ww-router/workbuddy-router && bash scripts/update-all.sh <版本>\""
+  请改用 Git Bash 运行：在仓库根目录右键打开 Git Bash，再执行 bash scripts/update-all.sh <版本>"
 fi
 command -v tasklist >/dev/null || warn "缺 tasklist，无法自动退出旧版（可手动关掉再跑）"
 
-INSTALL_DIR="/c/Users/zhengmy/AppData/Local/workbuddy-switch"
-DATA_DIR="/c/Users/zhengmy/.wb-switch"
+# 安装目录按 %LOCALAPPDATA% 推导，退回家目录下的默认位置。
+# 以前这里写死 /c/Users/<某个用户名>/...，换台机器就错，也会把用户名带进仓库。
+if [ -n "${LOCALAPPDATA:-}" ]; then
+  INSTALL_DIR="$(cygpath -u "$LOCALAPPDATA")/workbuddy-switch"
+else
+  INSTALL_DIR="$HOME/AppData/Local/workbuddy-switch"
+fi
+DATA_DIR="$HOME/.wb-switch"
 
 # ---------------------------------------------------------------------------
 say "[1/4] 退出正在运行的旧版"
