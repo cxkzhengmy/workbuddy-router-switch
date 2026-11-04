@@ -10,10 +10,9 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
+# 不设 concurrency：曾出现一次 pending 的旧运行卡住整个 pages 组，
+# 导致后续所有运行一直排队（API 也取消不了 pending 的 run）。
+# 演示站点的部署并发重叠没有实际危害，去掉这个限制。
 jobs:
   deploy:
     name: Build and deploy read-only demo
