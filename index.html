@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>workbuddy-switch · WorkBuddy 账号切换</title>
+    <title>WorkBuddy Router · 账号切换与内置网关</title>
     <!--
       首屏兜底样式：纯内联，不引用任何外部资源（离线 / 资源加载失败时同样可见）。
       正常启动时 React 挂载会清空 #root，占位自然消失；主题跟随系统，避免深色下闪白。
@@ -99,8 +99,8 @@
     <script>
       (function () {
         var timeoutMs = 10000;
-        // 与 src/lib/update.ts 的 GITHUB_RELEASE_URL 一致（内联脚本不能引用打包产物）。
-        var releaseUrl = "https://github.com/changexbc/workbuddy-switch/releases/latest";
+        // 内联脚本不能引用打包产物，下载地址在这里单独写一份。
+        var releaseUrl = "https://github.com/cxkzhengmy/workbuddy-router-switch/releases/latest";
         window.setTimeout(function () {
           if (window.__WB_MOUNTED__) return;
           var root = document.getElementById("root");
