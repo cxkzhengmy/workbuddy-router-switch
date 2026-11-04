@@ -5,19 +5,34 @@ use tauri::AppHandle;
 
 fn runtime_path() -> std::path::PathBuf {
     let suffix = if cfg!(windows) { ".exe" } else { "" };
-    let bundled = std::env::current_exe().ok().and_then(|exe| {
-        exe.parent()
-            .map(|dir| dir.join(format!("agent-studio-runtime{suffix}")))
-    });
-    if let Some(path) = bundled.filter(|path| path.is_file()) {
-        return path;
+    let target = env!("AGENT_COMPANION_TARGET");
+    let dev_name = format!("agent-studio-runtime-{target}{suffix}");
+
+    if let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|p| p.to_path_buf())) {
+        // 安装后：sidecar 与主程序同目录
+        let bundled = dir.join(format!("agent-studio-runtime{suffix}"));
+        if bundled.is_file() {
+            return bundled;
+        }
+        // 开发态：exe 在 target/<profile>/，往上两级是仓库根，sidecar 在 src-tauri/binaries/
+        //
+        // 这里刻意不用 env!("CARGO_MANIFEST_DIR")：它会把**构建机**的绝对路径
+        // 原样内联进二进制，发布出去的 exe 用 strings 就能翻出用户名和目录结构。
+        // 而 --remap-path-prefix 管不到它（那是给 rustc 生成的路径用的，压不进
+        // env! 展开的字面量）。改成运行时推导，发布包里就不会留编译机路径。
+        let dev = dir
+            .join("..")
+            .join("..")
+            .join("src-tauri")
+            .join("binaries")
+            .join(&dev_name);
+        if dev.is_file() {
+            return dev;
+        }
     }
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join(format!(
-            "agent-studio-runtime-{}{suffix}",
-            env!("AGENT_COMPANION_TARGET")
-        ))
+
+    // 都找不到时给个相对路径，交给上层按「sidecar 缺失」报错
+    std::path::PathBuf::from("binaries").join(dev_name)
 }
 
 pub fn config() -> agent_studio_desktop::Config {

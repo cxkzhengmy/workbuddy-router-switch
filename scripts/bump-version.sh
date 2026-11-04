@@ -1,21 +1,38 @@
 #!/bin/bash
-# 统一 bump 版本：usage: sh scripts/bump-version.sh 0.1.5
-set -e
-V=$1
-[ -z "$V" ] && echo "用法: sh scripts/bump-version.sh <新版本>" && exit 1
+# 统一 bump 版本：usage: bash scripts/bump-version.sh 1.0.6
+#
+# 不依赖 perl —— 部分 Git Bash / 精简环境里没有 perl（本机就没有），
+# 统一改成 sed。只用最小正则替换目标行，不重新序列化整个 JSON，
+# 避免把 tauri.conf.json 之类的格式整篇重排。
+set -euo pipefail
+
+V=${1:-}
+[ -z "$V" ] && { echo "用法: bash scripts/bump-version.sh <新版本>，例如 1.0.6"; exit 1; }
+case "$V" in
+  [0-9]*.[0-9]*.[0-9]*) : ;;
+  *) echo "版本号应形如 x.y.z，收到：$V"; exit 1 ;;
+esac
+
 cd "$(dirname "$0")/.."
-perl -pi -e "s/\"version\": \"[0-9.]+\"/\"version\": \"$V\"/" package.json src-tauri/tauri.conf.json npm/package.json
-perl -pi -e "s/^version = \"[0-9.]+\"/version = \"$V\"/" src-tauri/Cargo.toml crates/wb-switch-core/Cargo.toml crates/wb-switch-server/Cargo.toml
-# 平台包 package.json
-for f in npm/platform/*/package.json; do
-  perl -pi -e "s/\"version\": \"[0-9.]+\"/\"version\": \"$V\"/" "$f"
+
+# JSON：只替换顶层的 "version" 键（依赖名不会撞上这个键名）
+for f in package.json src-tauri/tauri.conf.json npm/package.json npm/platform/*/package.json; do
+  [ -f "$f" ] || continue
+  sed -i -E 's/"version": "[0-9]+\.[0-9]+\.[0-9]+"/"version": "'"$V"'"/' "$f"
 done
-# 主包 optionalDependencies 引用版本（用 node 解析 JSON，避免 perl 正则误伤）
-node -e "
-const fs = require('fs');
-const p = 'npm/package.json';
-const j = JSON.parse(fs.readFileSync(p));
-for (const k of Object.keys(j.optionalDependencies || {})) j.optionalDependencies[k] = '$V';
-fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
-"
-echo "所有版本已同步为 $V（含平台包与 optionalDependencies）"
+
+# npm 主包的 optionalDependencies 指向平台包，版本要跟着走
+if [ -f npm/package.json ]; then
+  sed -i -E 's/("workbuddy-switch[a-z0-9-]*": ")[0-9]+\.[0-9]+\.[0-9]+(")/\1'"$V"'\2/g' npm/package.json
+fi
+
+# TOML：只改 [package] 段第一处 version
+for f in src-tauri/Cargo.toml crates/wb-switch-core/Cargo.toml crates/wb-switch-server/Cargo.toml; do
+  [ -f "$f" ] || continue
+  sed -i -E '0,/^version = "[0-9]+\.[0-9]+\.[0-9]+"/s//version = "'"$V"'"/' "$f"
+done
+
+echo "版本已同步为 $V："
+grep -m1 '^version = ' src-tauri/Cargo.toml | sed 's/^/  src-tauri\/Cargo.toml: /'
+grep -m1 '"version"' src-tauri/tauri.conf.json | sed 's/^/  tauri.conf.json: /'
+grep -m1 '"version"' package.json | sed 's/^/  package.json: /'
