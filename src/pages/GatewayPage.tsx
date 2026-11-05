@@ -55,6 +55,8 @@ export default function GatewayPage() {
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  // 用量统计的区间：today / last7 / all 三个快捷档，或 day:YYYY-MM-DD（点柱子选中某天）。
+  const [range, setRange] = useState<string>("today");
 
   const [newName, setNewName] = useState("");
   const [newModels, setNewModels] = useState<string[]>([]);
@@ -82,8 +84,8 @@ export default function GatewayPage() {
       setAccountCfg(ac);
       // 只在首次填充，避免刷新把用户正在改的策略冲掉。
       setDraft((prev) => prev ?? ac.policy);
-      const o = await api.proxyOverview(7);
-      setOverview(o);
+      // 用量不在这里拉：它跟「选中的日期区间」绑定，由 refreshStats 统一负责，
+      // 否则两边用不同的窗口往回写，数字会来回跳。
     } catch (error) {
       toast.error(`读取网关状态失败：${(error as Error).message}`);
     } finally {
@@ -120,14 +122,51 @@ export default function GatewayPage() {
     }
   }, []);
 
+  /**
+   * 选中区间 → 本地时区的时间窗口（毫秒，左闭右开，与 SQL 的 `ts < until` 对齐）。
+   *
+   * 每次取值时才读 `Date.now()`：如果把它 memo 成固定对象，"今日" 的右边界
+   * 会停在首次渲染那一刻，之后每 5 秒的轮询都看不见新请求。
+   */
+  const currentWindow = useCallback(() => {
+    const now = Date.now();
+    const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    if (range === "all") return { from: 0, until: now };
+    if (range === "last7") {
+      const today = new Date();
+      const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6);
+      return { from: startOfDay(start), until: now };
+    }
+    if (range.startsWith("day:")) {
+      const [y, m, d] = range.slice(4).split("-").map(Number);
+      // 用「下一天的 0 点」而不是 +86400000：跨夏令时的地区一天不是 24 小时。
+      return { from: new Date(y, m - 1, d).getTime(), until: new Date(y, m - 1, d + 1).getTime() };
+    }
+    return { from: startOfDay(new Date()), until: now };
+  }, [range]);
+
+  const rangeLabel =
+    range === "today"
+      ? "今日"
+      : range === "last7"
+        ? "近 7 日"
+        : range === "all"
+          ? "累计"
+          : range.slice(4);
+
   const refreshStats = useCallback(() => {
+    const window = currentWindow();
     api
-      .proxyOverview(7)
+      .proxyOverview(7, window.from, window.until)
       .then(setOverview)
       .catch(() => {
         /* 轮询失败保持上一次的展示，不打断用户 */
       });
-  }, []);
+  }, [currentWindow]);
+  // 切换区间要立刻拉一次，不能等 5 秒轮询——点完柱子数字半天不变像没反应。
+  useEffect(() => {
+    refreshStats();
+  }, [refreshStats]);
   useVisibleInterval(refreshStats, 5000, !loading);
 
   const onStart = async () => {
@@ -322,7 +361,7 @@ export default function GatewayPage() {
     );
   }
 
-  const today = overview?.today;
+  const summary = overview?.summary;
 
   return (
     <div className="space-y-4">
@@ -620,40 +659,109 @@ export default function GatewayPage() {
         </CardContent>
       </Card>
 
-      {/* 今日用量 */}
+      {/* 用量（区间可切换） */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">今日用量</CardTitle>
-          <CardDescription>网关自己记的台账，不依赖客户端日志。</CardDescription>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base">{rangeLabel}用量</CardTitle>
+              <CardDescription>
+                网关自己记的台账，不依赖客户端日志。点下面的柱子可以看某一天的明细。
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(
+                [
+                  ["today", "今日"],
+                  ["last7", "近 7 日"],
+                  ["all", "累计"],
+                ] as const
+              ).map(([value, label]) => (
+                <Button
+                  key={value}
+                  size="sm"
+                  variant={range === value ? "default" : "outline"}
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => setRange(value)}
+                >
+                  {label}
+                </Button>
+              ))}
+              {/* 台账保留 90 天，超出 7 日图的往日靠这里选：柱子只有七根，
+                  但「上个月的某天」同样是用户会问的问题。 */}
+              <Input
+                type="date"
+                aria-label="查看指定日期的用量"
+                className="h-7 w-[8.75rem] px-2 text-xs"
+                value={range.startsWith("day:") ? range.slice(4) : ""}
+                max={localDateKey(new Date())}
+                min={localDateKey(new Date(Date.now() - 89 * 86_400_000))}
+                onChange={(event) =>
+                  setRange(event.target.value ? `day:${event.target.value}` : "today")
+                }
+              />
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <Metric label="请求" value={fmtNum(today?.requests ?? 0)} />
-            <Metric label="输入" value={fmtNum(today?.promptTokens ?? 0)} />
-            <Metric label="输出" value={fmtNum(today?.completionTokens ?? 0)} />
-            <Metric label="积分" value={fmtCredit(today?.credit ?? 0)} />
-            <Metric label="平均首字" value={fmtMs(today?.avgTtftMs ?? 0)} />
+            <Metric label="请求" value={fmtNum(summary?.requests ?? 0)} />
+            <Metric label="输入" value={fmtNum(summary?.promptTokens ?? 0)} />
+            <Metric label="输出" value={fmtNum(summary?.completionTokens ?? 0)} />
+            <Metric label="积分" value={fmtCredit(summary?.credit ?? 0)} />
+            <Metric label="平均首字" value={fmtMs(summary?.avgTtftMs ?? 0)} />
             <Metric
               label="失败"
-              value={fmtNum(today?.errors ?? 0)}
-              tone={(today?.errors ?? 0) > 0 ? "warn" : undefined}
+              value={fmtNum(summary?.errors ?? 0)}
+              tone={(summary?.errors ?? 0) > 0 ? "warn" : undefined}
             />
           </div>
 
           {dailySeries.length > 0 && (
             <div>
-              <div className="mb-2 text-xs font-medium text-muted-foreground">近 7 日 token</div>
-              <div className="flex h-20 items-end gap-1.5">
-                {dailySeries.map((point) => (
-                  <div key={point.date} className="group flex flex-1 flex-col items-center gap-1">
-                    <div
-                      className="w-full rounded-sm bg-primary/60 transition-colors group-hover:bg-primary"
-                      style={{ height: `${Math.max(2, (point.tokens / dailyMax) * 64)}px` }}
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">近 7 日 token</span>
+                <span className="text-[11px] text-muted-foreground/70">
+                  {range.startsWith("day:")
+                    ? `已选 ${range.slice(4)}，再点一次取消`
+                    : "点柱子查看当天明细"}
+                </span>
+              </div>
+              <div className="flex h-24 items-end gap-1.5">
+                {dailySeries.map((point) => {
+                  const key = `day:${point.date}`;
+                  const active = range === key;
+                  return (
+                    <button
+                      key={point.date}
+                      type="button"
+                      // 再点一次同一根柱子回到「今日」：不给一个显式的取消入口，
+                      // 用户会以为只能前进不能后退。
+                      onClick={() => setRange(active ? "today" : key)}
+                      className="group flex flex-1 cursor-pointer flex-col items-center gap-1"
                       title={`${point.date}：${fmtNum(point.tokens)} tokens / ${point.requests} 次`}
-                    />
-                    <span className="text-[10px] text-muted-foreground">{point.date.slice(5)}</span>
-                  </div>
-                ))}
+                      aria-pressed={active}
+                    >
+                      <div
+                        className={cn(
+                          "w-full rounded-sm transition-colors",
+                          active
+                            ? "bg-primary ring-1 ring-primary"
+                            : "bg-primary/60 group-hover:bg-primary",
+                        )}
+                        style={{ height: `${Math.max(2, (point.tokens / dailyMax) * 64)}px` }}
+                      />
+                      <span
+                        className={cn(
+                          "text-[10px]",
+                          active ? "font-medium text-primary" : "text-muted-foreground",
+                        )}
+                      >
+                        {point.date.slice(5)}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -790,12 +898,20 @@ export default function GatewayPage() {
       {/* 模型速度 */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">模型速度</CardTitle>
-          <CardDescription>首字延迟取 p50 / p95，吞吐按生成阶段折算。</CardDescription>
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            模型速度
+            <Badge variant="secondary">{rangeLabel}</Badge>
+          </CardTitle>
+          <CardDescription>
+            首字延迟取 p50 / p95，吞吐按生成阶段折算。统计范围跟随上方选中的区间，
+            数据来自网关台账，不是临时采样。
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {(overview?.models?.length ?? 0) === 0 ? (
-            <p className="text-sm text-muted-foreground">还没有请求记录。</p>
+            <p className="text-sm text-muted-foreground">
+              {range === "today" ? "今天还没有请求记录。" : `${rangeLabel}没有请求记录。`}
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -896,12 +1012,19 @@ export default function GatewayPage() {
       {/* 最近请求 */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">最近请求</CardTitle>
-          <CardDescription>最近 50 条，每 5 秒自动刷新（窗口隐藏时暂停）。</CardDescription>
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            请求明细
+            <Badge variant="secondary">{rangeLabel}</Badge>
+          </CardTitle>
+          <CardDescription>
+            该区间内最近 50 条，每 5 秒自动刷新（窗口隐藏时暂停）。
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {(overview?.recent?.length ?? 0) === 0 ? (
-            <p className="text-sm text-muted-foreground">还没有请求。</p>
+            <p className="text-sm text-muted-foreground">
+              {range === "today" ? "今天还没有请求。" : `${rangeLabel}没有请求记录。`}
+            </p>
           ) : (
             <div className="max-h-72 overflow-auto">
               <table className="w-full text-xs">
@@ -1066,4 +1189,10 @@ function fmtTime(ms: number): string {
   const date = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** 本地日期键（YYYY-MM-DD），给 `<input type="date">` 用。不能用 toISOString——那是 UTC。 */
+function localDateKey(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }

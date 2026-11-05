@@ -1189,8 +1189,15 @@ export function proxySetLanAccess(enabled: boolean): Promise<{
 }
 
 /** 统计概览：今日 / 累计 / 按模型速度 / 按天趋势 / 最近请求。 */
-export function proxyOverview(days = 7): Promise<ProxyOverview> {
-  return call("proxy_overview", { days });
+/**
+ * 统计概览。
+ *
+ * `from` / `until` 是本地时区下的毫秒时间戳，左闭右开；不传则由后端取
+ * 「本地今天 0 点 → 现在」。日期边界交给界面算，是因为只有浏览器知道
+ * 用户所处的时区。
+ */
+export function proxyOverview(days = 7, from?: number, until?: number): Promise<ProxyOverview> {
+  return call("proxy_overview", { days, from: from ?? null, until: until ?? null });
 }
 
 export function proxyModels(force = false): Promise<ProxyModelList> {

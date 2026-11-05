@@ -1121,7 +1121,10 @@ export interface ProxyRecentItem {
 }
 
 export interface ProxyOverview {
-  today: ProxyUsageSummary;
+  /** 本次统计的区间（毫秒，左闭右开）。界面按它确认「到底查了哪一段」。 */
+  window: { from: number; until: number };
+  /** 选中区间的汇总（今日 / 近 7 日 / 全部 / 某一天）。 */
+  summary: ProxyUsageSummary;
   allTime: ProxyUsageSummary;
   models: ProxyModelStat[];
   daily: ProxyDailyPoint[];

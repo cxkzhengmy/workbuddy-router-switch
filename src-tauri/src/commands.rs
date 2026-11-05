@@ -1511,10 +1511,16 @@ pub async fn proxy_set_lan_access(enabled: bool) -> Result<Value, String> {
     proxy::set_lan_access(enabled).await
 }
 
-/// 统计概览：今日 / 累计 / 按模型速度 / 按天趋势 / 最近请求。
+/// 统计概览：选中区间的汇总 / 按模型速度 / 按天趋势 / 最近请求。
+///
+/// `from` / `until` 由界面按本地时区算好后传入（左闭右开）；缺省为本地今天 0 点起。
 #[tauri::command]
-pub async fn proxy_overview(days: Option<i64>) -> Result<Value, String> {
-    Ok(proxy::overview(days.unwrap_or(7)))
+pub async fn proxy_overview(
+    days: Option<i64>,
+    from: Option<i64>,
+    until: Option<i64>,
+) -> Result<Value, String> {
+    Ok(proxy::overview(days.unwrap_or(7), from, until))
 }
 
 #[tauri::command]

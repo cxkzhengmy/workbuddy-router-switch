@@ -1861,7 +1861,9 @@ fn proxy_port() -> u16 {
 
 async fn api_proxy_overview(Json(body): Json<Value>) -> Response {
     let days = body.get("days").and_then(Value::as_i64).unwrap_or(7);
-    json_ok(proxy::overview(days))
+    let from = body.get("from").and_then(Value::as_i64);
+    let until = body.get("until").and_then(Value::as_i64);
+    json_ok(proxy::overview(days, from, until))
 }
 
 async fn api_proxy_models(Json(body): Json<Value>) -> Response {

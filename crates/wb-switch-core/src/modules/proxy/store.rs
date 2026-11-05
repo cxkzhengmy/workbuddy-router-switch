@@ -353,6 +353,12 @@ pub fn record(req: &RequestRecord) {
 
 /// 汇总：请求数、token、积分、平均首字与吞吐。
 pub fn summary(since_ms: i64) -> Value {
+    summary_between(since_ms, i64::MAX)
+}
+
+/// 指定区间的汇总。`[since, until)` 左闭右开——按天看时必须这样切，
+/// 否则 24:00 那条记录会同时算进两天。
+pub fn summary_between(since_ms: i64, until_ms: i64) -> Value {
     let Ok(c) = conn() else {
         return json!({});
     };
@@ -366,8 +372,8 @@ pub fn summary(since_ms: i64) -> Value {
                   COALESCE(AVG(ttft_ms),0),
                   COALESCE(AVG(total_ms),0),
                   COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END),0)
-           FROM requests WHERE ts >= ?1"#,
-        params![since_ms],
+           FROM requests WHERE ts >= ?1 AND ts < ?2"#,
+        params![since_ms, until_ms],
         |r| {
             Ok(json!({
                 "requests": r.get::<_, i64>(0)?,
@@ -388,6 +394,12 @@ pub fn summary(since_ms: i64) -> Value {
 /// 按模型聚合。带 p50 / p95 首字延迟——分位在 Rust 里排序算，
 /// SQL 没有通用分位函数，硬塞进去反而难读。
 pub fn by_model(since_ms: i64) -> Vec<Value> {
+    by_model_between(since_ms, i64::MAX)
+}
+
+/// 指定区间的按模型聚合。带 p50 / p95 首字延迟——分位在 Rust 里排序算，
+/// SQL 没有通用分位函数，硬塞进去反而难读。
+pub fn by_model_between(since_ms: i64, until_ms: i64) -> Vec<Value> {
     let Ok(c) = conn() else {
         return Vec::new();
     };
@@ -398,13 +410,14 @@ pub fn by_model(since_ms: i64) -> Vec<Value> {
                   COALESCE(SUM(completion_tokens),0),
                   COALESCE(SUM(credit),0),
                   COALESCE(SUM(total_tokens),0)
-           FROM requests WHERE ts >= ?1 GROUP BY model ORDER BY 3 + 4 DESC"#,
+           FROM requests WHERE ts >= ?1 AND ts < ?2
+           GROUP BY model ORDER BY 3 + 4 DESC"#,
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
     let base: Vec<(String, i64, i64, i64, f64, i64)> = stmt
-        .query_map(params![since_ms], |r| {
+        .query_map(params![since_ms, until_ms], |r| {
             Ok((
                 r.get::<_, Option<String>>(0)?.unwrap_or_default(),
                 r.get::<_, i64>(1)?,
@@ -420,10 +433,10 @@ pub fn by_model(since_ms: i64) -> Vec<Value> {
     base.into_iter()
         .map(|(model, requests, prompt, completion, credit, total)| {
             let ttfts = match c.prepare(
-                "SELECT ttft_ms FROM requests WHERE ts >= ?1 AND model = ?2 AND ttft_ms IS NOT NULL",
+                "SELECT ttft_ms FROM requests WHERE ts >= ?1 AND ts < ?2 AND model = ?3 AND ttft_ms IS NOT NULL",
             ) {
                 Ok(mut s) => s
-                    .query_map(params![since_ms, &model], |r| r.get::<_, i64>(0))
+                    .query_map(params![since_ms, until_ms, &model], |r| r.get::<_, i64>(0))
                     .map(|it| it.filter_map(Result::ok).collect::<Vec<_>>())
                     .unwrap_or_default(),
                 Err(_) => Vec::new(),
@@ -431,8 +444,8 @@ pub fn by_model(since_ms: i64) -> Vec<Value> {
             let gen_ms = match c.query_row(
                 r#"SELECT COALESCE(SUM(CASE WHEN ttft_ms IS NOT NULL AND total_ms IS NOT NULL
                           THEN MAX(total_ms - ttft_ms, 1) ELSE 0 END),0)
-                   FROM requests WHERE ts >= ?1 AND model = ?2"#,
-                params![since_ms, &model],
+                   FROM requests WHERE ts >= ?1 AND ts < ?2 AND model = ?3"#,
+                params![since_ms, until_ms, &model],
                 |r| r.get::<_, i64>(0),
             ) {
                 Ok(v) => v,
@@ -493,18 +506,25 @@ pub fn daily(days: i64) -> Vec<Value> {
 
 /// 最近若干条请求（排障用）。
 pub fn recent(limit: usize) -> Vec<Value> {
+    recent_between(i64::MIN, i64::MAX, limit)
+}
+
+/// 指定区间内最近若干条请求。看某一天的明细时用它——不带区间的话，
+/// 选的是「10-30」，列表里却是今天的最新几条，对不上号。
+pub fn recent_between(since_ms: i64, until_ms: i64, limit: usize) -> Vec<Value> {
     let Ok(c) = conn() else {
         return Vec::new();
     };
     let mut stmt = match c.prepare(
         r#"SELECT ts, model, status, prompt_tokens, completion_tokens, credit,
                   ttft_ms, total_ms, account_label, error
-           FROM requests ORDER BY id DESC LIMIT ?1"#,
+           FROM requests WHERE ts >= ?1 AND ts < ?2
+           ORDER BY id DESC LIMIT ?3"#,
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    stmt.query_map(params![limit as i64], |r| {
+    stmt.query_map(params![since_ms, until_ms, limit as i64], |r| {
         Ok(json!({
             "ts": r.get::<_, i64>(0)?,
             "model": r.get::<_, Option<String>>(1)?,

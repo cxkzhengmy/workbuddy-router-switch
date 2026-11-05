@@ -317,16 +317,39 @@ pub async fn external_models() -> Value {
 // 统计
 // ---------------------------------------------------------------------------
 
-/// 首页概览：今日汇总、按模型速度、按天趋势、最近请求。
-pub fn overview(days: i64) -> Value {
-    let today = store::now_ms() - 86_400_000;
+/// 首页概览：选中区间的汇总、按模型速度、按天趋势、最近请求。
+///
+/// `from` / `until` 是**用户本地时区**下的毫秒时间戳，`[from, until)` 左闭右开。
+/// 由界面按「今日 / 近 7 日 / 全部 / 某一天」算好后传进来：日期边界是用户的
+/// 本地时区概念，Rust 侧再猜一次只会两边对不上（跨时区、夏令时都会翻车）。
+/// 缺省时取「本地今天 0 点 → 现在」。
+///
+/// 早期版本这里只算「最近 24 小时」且固定叫 `today`，导致两个真实问题：
+/// 往日数据在库里（保留 90 天）但页面没有任何入口；模型速度只看 24 小时，
+/// 隔天再看就空了，像是「临时数据」。
+pub fn overview(days: i64, from: Option<i64>, until: Option<i64>) -> Value {
+    let now = store::now_ms();
+    let from = from.unwrap_or_else(local_day_start).max(0);
+    // 空区间会让 `ts < ?` 恒假、所有卡片归零；补 1ms 至少保证语义成立。
+    let until = until.unwrap_or(now).max(from + 1);
     json!({
-        "today": store::summary(today),
-        "allTime": store::summary(0),
-        "models": store::by_model(today),
+        "window": { "from": from, "until": until },
+        "summary": store::summary_between(from, until),
+        "allTime": store::summary_between(0, i64::MAX),
+        "models": store::by_model_between(from, until),
         "daily": store::daily(days.clamp(1, 90)),
-        "recent": store::recent(50),
+        "recent": store::recent_between(from, until, 50),
     })
+}
+
+/// 本地时区今天 0 点（毫秒）。取不到时退回「24 小时前」，宁可粗一点也不能崩。
+fn local_day_start() -> i64 {
+    use chrono::{Local, TimeZone};
+    let midnight = Local::now().date_naive().and_hms_opt(0, 0, 0);
+    midnight
+        .and_then(|naive| Local.from_local_datetime(&naive).single())
+        .map(|dt| dt.timestamp_millis())
+        .unwrap_or_else(|| store::now_ms() - 86_400_000)
 }
 
 pub fn clear_history() -> Result<Value, String> {
