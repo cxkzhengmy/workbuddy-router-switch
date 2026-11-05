@@ -56,6 +56,10 @@ button:focus-visible{outline:2px solid #698fc2;outline-offset:3px}
 .desktop-chevron{width:10px;height:10px;margin-left:auto;flex-shrink:0;color:#477997}
 .desktop-preview:is(:hover,.native-hover):not(:disabled){color:#477997}
 .desktop-dismiss{font-size:9px;color:#8295a8}
+/* 模型 + 速度行：任务卡片第三行，尺寸比正文更小，避免抢主信息。 */
+.desktop-card-stats{display:flex;align-items:center;gap:6px;margin-top:3px;font-size:9px;line-height:12px;color:#7b8ea3;min-width:0}
+.desktop-stat-model{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.desktop-stat-speed{margin-left:auto;flex-shrink:0;color:#39866d;font-variant-numeric:tabular-nums}
 .desktop-notice{position:absolute;right:107px;top:24px;margin:0;z-index:6;width:228px;max-width:calc(100vw - 140px);padding:10px 12px;background:#fff5e5;color:#916b42;border-radius:12px;box-shadow:0 3px 12px #294b4222;font-size:11px;line-height:1.6;overflow-wrap:anywhere}
 .desktop-context-backdrop{position:fixed;inset:0;z-index:7;background:transparent}
 .desktop-context-menu{position:fixed;z-index:8;width:94px;padding:2px;border:1px solid #dce5ed;border-radius:7px;background:#fff;box-shadow:0 4px 12px #233e5926}
@@ -66,7 +70,9 @@ button:focus-visible{outline:2px solid #698fc2;outline-offset:3px}
 
 /* Compact companion previews share the avatar row's 44px height. */
 .desktop-strip{padding-bottom:10px}
-.desktop-card{height:44px;min-height:44px;padding:5px 9px;border-radius:12px;gap:0}
+/* 58px = head 14 + 预览 18 + 模型/速度行 15 + 上下内边距 10，另留 1px 余量。
+   矮了会把第三行挤掉（实测 56 差 1px）。 */
+.desktop-card{height:58px;min-height:58px;padding:5px 9px;border-radius:12px;gap:0}
 .desktop-card-body{position:relative}
 .desktop-card-head{min-height:14px;gap:4px;line-height:14px}
 .desktop-card-head strong{font-size:10px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -115,5 +121,6 @@ button:focus-visible{outline:2px solid #698fc2;outline-offset:3px}
 #desktop-rail[data-size=medium] .desktop-card-head strong,#desktop-rail[data-size=small] .desktop-card-head strong{font-size:max(9px,calc(10px * var(--rail-scale)))}
 #desktop-rail[data-size=medium] .desktop-card-status,#desktop-rail[data-size=small] .desktop-card-status,#desktop-rail[data-size=medium] .desktop-provider,#desktop-rail[data-size=small] .desktop-provider{font-size:calc(8px * var(--rail-scale))}
 #desktop-rail[data-size=medium] .desktop-preview,#desktop-rail[data-size=small] .desktop-preview{font-size:max(9px,calc(10px * var(--rail-scale)));line-height:calc(16px * var(--rail-scale));height:calc(16px * var(--rail-scale));margin-top:calc(2px * var(--rail-scale))}
+#desktop-rail[data-size=medium] .desktop-card-stats,#desktop-rail[data-size=small] .desktop-card-stats{font-size:max(8px,calc(9px * var(--rail-scale)));line-height:calc(12px * var(--rail-scale));margin-top:calc(3px * var(--rail-scale))}
 #desktop-rail[data-size=medium] .desktop-dismiss,#desktop-rail[data-size=small] .desktop-dismiss{width:calc(18px * var(--rail-scale));height:calc(18px * var(--rail-scale));font-size:calc(11px * var(--rail-scale));left:calc(-20px * var(--rail-scale));top:calc(-14px * var(--rail-scale))}
 #desktop-rail[data-size=medium] .desktop-notice,#desktop-rail[data-size=small] .desktop-notice{right:calc(33px + 74px * var(--rail-scale));width:calc(228px * var(--rail-scale));font-size:calc(11px * var(--rail-scale));padding:calc(10px * var(--rail-scale)) calc(12px * var(--rail-scale))}

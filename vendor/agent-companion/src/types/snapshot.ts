@@ -62,6 +62,20 @@ export interface Session {
   tokens: number | null;
   endedAt: number | null;
 
+  /**
+   * 这条任务用的模型与吞吐。只有能从会话记录里读出来的适配器才有
+   * （目前是 workbuddy），其余来源保持缺省。
+   *
+   * `speed` 是「最近 `speedSamples` 步」的平均输出速度（token/s），
+   * 相邻两步的时间差里含工具执行时间，因此比真实生成速度偏低，
+   * 展示时必须带「约」。
+   */
+  model?: string;
+  /** 模型的人类可读名（`DeepSeek-V4.1-Flash`），缺失时用 `model`。 */
+  modelName?: string | null;
+  speed?: number | null;
+  speedSamples?: number | null;
+
   // Present only once an adapter has observed them.
   folderId?: string | number;
   agentType?: string;

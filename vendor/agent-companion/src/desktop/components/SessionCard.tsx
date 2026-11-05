@@ -8,6 +8,11 @@ import { ProviderIcons, providerLabel } from './provider.js';
 
 const DISMISSABLE = new Set(['wait', 'done', 'error', 'aborted']);
 
+/** 速度取整到个位；个位数保留一位小数，免得 3.7 显示成 4 看着像没在动。 */
+function speedLabel(speed: number) {
+  return speed >= 10 ? String(Math.round(speed)) : speed.toFixed(1);
+}
+
 /**
  * The body shared by the hover card and the automatic question card. The two
  * differ only in which connection state they are told about, which the caller
@@ -27,6 +32,11 @@ export function SessionCard({item, connection, surfaceKey, controller}: {
   const providerHint = presentation.badge?.detail ?? label;
   const project = railProjectLabel(item.session, presentation.provider);
   const slowPermission = prolongedPermissionCheck(item.session);
+  const model = item.session.model;
+  const speed = item.session.speed;
+  const hasSpeed = typeof speed === 'number' && speed > 0;
+  const speedSamples = item.session.speedSamples ?? 0;
+  const speedHint = `最近 ${speedSamples || 1} 步平均输出速度，间隔中含工具执行时间，比真实生成速度略低`;
   const dismissTitle = item.session.status === 'wait' ? '关闭本次待确认提示'
     : slowPermission ? '关闭本次权限提醒'
       : item.session.status === 'error' ? '关闭本次失败提示'
@@ -55,6 +65,16 @@ export function SessionCard({item, connection, surfaceKey, controller}: {
           </svg>
         )}
       </button>
+      {(model || hasSpeed) && (
+        <div className="desktop-card-stats">
+          {model && (
+            <span className="desktop-stat-model" title={item.session.modelName ?? model}>{model}</span>
+          )}
+          {hasSpeed && (
+            <span className="desktop-stat-speed" title={speedHint}>约 {speedLabel(speed as number)} tok/s</span>
+          )}
+        </div>
+      )}
       {(DISMISSABLE.has(item.session.status) || slowPermission) && (
         <button
           type="button"

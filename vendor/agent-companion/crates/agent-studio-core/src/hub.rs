@@ -56,6 +56,12 @@ impl Hub {
             "sourceLabel",
             "parentTitle",
             "subagent",
+            // 任务用的模型与吞吐：由适配器从会话记录尾部算出，展示在悬浮窗卡片上。
+            // 数值型也要走这条通道，`text()` 对数字给的是它的字符串形式，非空即通过。
+            "model",
+            "modelName",
+            "speed",
+            "speedSamples",
         ] {
             if !ev[key].is_null() && !text(&ev[key]).is_empty() {
                 s[key] = if key == "title" {
@@ -104,6 +110,14 @@ impl Hub {
             s["steps"] = json!([]);
             s["status"] = json!("running");
             s["tokens"] = Value::Null;
+            // 速度是「最近 5 步」的窗口值，新一轮开始时上一轮的窗口已无意义。
+            // 用 remove 而不是置 null：没装模型的来源不该凭空多出这两个键
+            // （快照结构要与 JS 侧逐字段一致，多一个 null 就会判为不一致）。
+            // 模型保留——同一条会话通常不会中途换模型，留着比闪空白更有用。
+            if let Some(o) = s.as_object_mut() {
+                o.remove("speed");
+                o.remove("speedSamples");
+            }
             if source == "codex" { s.as_object_mut().unwrap().remove("recovered"); }
             if let Some(o) = s.as_object_mut() {
                 o.remove("endedBy");

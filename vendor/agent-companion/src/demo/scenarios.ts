@@ -42,6 +42,11 @@ export interface DemoCastMember {
   tokens: number;
   agentType?: string;
   hostKind?: string;
+  /** 演示「模型 + 速度」那一行；只有 workbuddy 来源会带。 */
+  model?: string;
+  modelName?: string;
+  speed?: number;
+  speedSamples?: number;
 }
 
 /**
@@ -50,7 +55,7 @@ export interface DemoCastMember {
  */
 export const DEMO_CAST: DemoCastMember[] = [
   {id: 'codex:demo-rail-story', source: 'codex', sessionId: 'demo-rail-story', cwd: '/Users/demo/workspace/agent-companion', title: '生成发布说明', project: 'agent-companion', tokens: 48210},
-  {id: 'workbuddy:demo-release-notes', source: 'workbuddy', sessionId: 'demo-release-notes', cwd: '/Users/demo/workspace/2026-09-24-17-24-22', title: '汇总本周的发布说明', project: '2026-09-24-17-24-22', tokens: 15230},
+  {id: 'workbuddy:demo-release-notes', source: 'workbuddy', sessionId: 'demo-release-notes', cwd: '/Users/demo/workspace/2026-09-24-17-24-22', title: '汇总本周的发布说明', project: '2026-09-24-17-24-22', tokens: 15230, model: 'deepseek-v4.1-flash', modelName: 'DeepSeek-V4.1-Flash', speed: 96.4, speedSamples: 5},
 ];
 
 /** The session that asks for confirmation and later finishes. */
@@ -124,6 +129,9 @@ function session(member: DemoCastMember, roundId: string, now: number, frame: De
     endedAt,
     ...(member.agentType ? {agentType: member.agentType} : {}),
     ...(member.hostKind ? {hostKind: member.hostKind} : {}),
+    ...(member.model ? {model: member.model} : {}),
+    ...(member.modelName ? {modelName: member.modelName} : {}),
+    ...(typeof member.speed === 'number' ? {speed: member.speed, speedSamples: member.speedSamples ?? 0} : {}),
     project: member.project,
     stale: false,
     elapsed: Math.max(0, ((endedAt ?? now) - startedAt) / 1000),

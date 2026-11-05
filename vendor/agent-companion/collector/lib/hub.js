@@ -45,6 +45,11 @@ export class Hub {
     if (ev.sourceLabel) s.sourceLabel = [...String(ev.sourceLabel)].slice(0, 60).join('');
     if (ev.parentTitle) s.parentTitle = [...String(ev.parentTitle)].slice(0, 80).join('');
     if (ev.subagent != null && ev.subagent !== '') s.subagent = ev.subagent;
+    // 模型与吞吐：生产者（workbuddy 适配器）算好后随事件带过来，这里只做透传。
+    if (ev.model) s.model = String(ev.model);
+    if (ev.modelName) s.modelName = String(ev.modelName);
+    if (typeof ev.speed === 'number') s.speed = ev.speed;
+    if (Number.isInteger(ev.speedSamples)) s.speedSamples = ev.speedSamples;
     if (ev.externalId) s.externalId = String(ev.externalId);
     if (Number.isInteger(ev.webPort) && ev.webPort > 0 && ev.webPort < 65536) s.webPort = ev.webPort;
     if (ev.type === 'meta') { if (ev.roundId && s.roundId.startsWith('observed:')) s.roundId = ev.roundId; return; }
@@ -60,6 +65,9 @@ export class Hub {
     if (ts < s.updatedAt && !sameRoundRequest) return; // Hooks may arrive ahead of same-round log requests.
     if (ev.type === 'start' && ev.roundId !== s.roundId) {
       Object.assign(s, { roundId: ev.roundId || `turn:${ts}`, startedAt: ts, endedAt: null, pending: [], steps: [], status: 'running', tokens: null });
+      // 与 Rust 侧同一口径：速度窗口在新一轮失效，但键要真正消失而不是留 null。
+      delete s.speed;
+      delete s.speedSamples;
       s.permissionChecks = []; delete s.endedBy;
     }
     if (ev.roundId && s.roundId.startsWith('observed:')) s.roundId = ev.roundId;

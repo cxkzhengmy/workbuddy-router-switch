@@ -26,7 +26,8 @@ pub const WORKBUDDY_HOOK_EVENTS: [&str; 10] = [
 // 沙箱类审批（敏感凭证/沙箱写/HTTP 拦截/批量删除）不发送任何 hook 事件，
 // 但会写进 WorkBuddy 的会话级运行日志。这里做增量扫描，把弹框/处理事件
 // 转成 hub 事件（wait / resolve），使悬浮窗显示「待确认」。
-// 只匹配审批行，其余内容读入即弃；不读取会话文件、数据库或 transcript。
+// 只匹配审批行，其余内容读入即弃；不读取数据库，不保留任何消息正文。
+// （会话 transcript 的读取仅限下面「当前模型与吞吐」那一处：只取模型名与 token 数。）
 
 // 扫描节流：WorkBuddy 会话日志本身有 10–25 秒的应用层缓冲（实测），
 // 端到端延迟由它支配；本侧节流放宽到 10 秒以降低目录扫描开销。
@@ -164,10 +165,127 @@ fn confirmation_notification(p: &Value) -> bool {
         || text.contains("凭证")
 }
 
+// ---- 当前模型与吞吐（读会话记录尾部）----
+//
+// 悬浮窗上要显示「这条任务在用哪个模型、大概多快」。hook 载荷能直接给出 model，
+// 但不含任何 token 数或耗时，回合中也拿不到输出速率；这两项只在会话记录里。
+// 所以这里在被 hook 触发的时机，读 payload 自带的 `transcript_path` 的**尾部**，
+// 只取模型名、最近若干步的输出 token 与时间戳，算一个平均吞吐。
+// 不保留、不返回、不落盘任何消息正文或工具参数。
+//
+// 已知误差：相邻两步的时间差里混着工具执行时间，算出来的速度比真实生成速度
+// 偏低。展示层统一加「约」，宁可标低，也不要给出一个看起来精确的假数字。
+//
+// 与上面审批日志的关系：审批日志来自 WorkBuddy 的运行日志（只匹配审批行），
+// 这里是同一个会话的 transcript（只取数值字段），两条路径互不影响。
+
+/// 单次读取的尾部字节数。会话记录单行可能上万字节（工具参数），
+/// 所以按字节而不是按行数截断；512KB 足够覆盖最近若干步。
+const TRANSCRIPT_TAIL_BYTES: u64 = 512 * 1024;
+/// 速度窗口：最近 5 步。
+const SPEED_WINDOW_STEPS: usize = 5;
+/// 重算节流。工具调用前后 hook 会密集到达，每次都重读 512KB 没有意义。
+const LIVE_STATS_REFRESH_MS: i64 = 1_200;
+
+/// 读文件尾部；返回的文本首个换行之前的部分可能被截断，解析时会自行跳过。
+fn read_transcript_tail(path: &Path) -> Option<String> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let start = len.saturating_sub(TRANSCRIPT_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::with_capacity(TRANSCRIPT_TAIL_BYTES as usize);
+    file.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if start == 0 {
+        return Some(text);
+    }
+    // 截断处的第一行必然是半行，丢掉
+    Some(match text.find('\n') {
+        Some(i) => text[i + 1..].to_owned(),
+        None => String::new(),
+    })
+}
+
+/// 从会话记录尾部文本算出模型与吞吐。返回 `None` 表示这段记录里没有用量信息
+/// （文件刚创建、或不是本适配器认识的格式），调用方应保留上一次的结果。
+pub fn live_stats_from_tail(text: &str) -> Option<Value> {
+    // (时间戳, 输出 token, 去重键)
+    let mut steps: Vec<(i64, i64)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut model = String::new();
+    let mut model_name = String::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let p = &v["providerData"];
+        let usage = &p["rawUsage"];
+        if !usage.is_object() {
+            continue;
+        }
+        if let Some(m) = p["model"].as_str().filter(|s| !s.is_empty()) {
+            model = m.to_owned();
+        }
+        if let Some(n) = p["requestModelName"].as_str().filter(|s| !s.is_empty()) {
+            model_name = n.to_owned();
+        }
+        // 同一次模型回复可能落多行（思考 / 正文 / 工具调用），按消息 id 只算一次；
+        // 缺 id 的行直接跳过——无法去重就等于把同一次输出算两遍。
+        let key = p["messageId"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .or_else(|| p["conversationRequestId"].as_str().filter(|s| !s.is_empty()));
+        let Some(key) = key else { continue };
+        if !seen.insert(key.to_owned()) {
+            continue;
+        }
+        let ts = v["timestamp"].as_i64().unwrap_or(0);
+        if ts <= 0 {
+            continue;
+        }
+        let out = usage["completion_tokens"].as_i64().unwrap_or(0).max(0);
+        steps.push((ts, out));
+        if steps.len() > 64 {
+            steps.remove(0);
+        }
+    }
+    if steps.is_empty() || model.is_empty() {
+        return None;
+    }
+    steps.sort_by_key(|s| s.0);
+    // 窗口内多取一步当时间起点：5 步输出对应的是它们之前的那个间隔。
+    let start = steps.len().saturating_sub(SPEED_WINDOW_STEPS + 1);
+    let win = &steps[start..];
+    let first_ts = win[0].0;
+    let last_ts = win[win.len() - 1].0;
+    let tokens: i64 = win.iter().skip(1).map(|s| s.1).sum();
+    let span = last_ts - first_ts;
+    let speed = if span > 0 && tokens > 0 {
+        (tokens as f64 * 1000.0 / span as f64 * 10.0).round() / 10.0
+    } else {
+        0.0
+    };
+    Some(json!({
+        "model": model,
+        "modelName": if model_name.is_empty() { Value::Null } else { json!(model_name) },
+        "speed": speed,
+        "samples": win.len().saturating_sub(1),
+        "windowTokens": tokens,
+        "lastStepAt": last_ts,
+    }))
+}
+
+fn live_stats(path: &Path) -> Option<Value> {
+    read_transcript_tail(path).and_then(|text| live_stats_from_tail(&text))
+}
+
 fn settings_json(dir: PathBuf) -> PathBuf {
     dir.join("settings.json")
 }
-
 fn looks_like_workbuddy_home(dir: &Path) -> bool {
     dir.is_dir() && (dir.join("settings.json").exists() || dir.join("workbuddy.db").exists())
 }
@@ -329,13 +447,31 @@ impl Collector {
                 .to_owned()
         };
         state["agentType"] = json!(agent_type);
+        // 模型与速度：payload 自带 transcript_path，读尾部即可（按 1.2s 节流）。
+        // 读不到就沿用上一次的结果，不要退回 null——那会让卡片在工具调用间隙闪一下空值。
+        let transcript = p["transcript_path"]
+            .as_str()
+            .or(p["transcriptPath"].as_str())
+            .unwrap_or("");
+        let stale = ts - state["liveAt"].as_i64().unwrap_or(0) >= LIVE_STATS_REFRESH_MS;
+        if !transcript.is_empty() && (stale || state["live"].is_null()) {
+            if let Some(stats) = live_stats(Path::new(transcript)) {
+                state["live"] = stats;
+                state["liveAt"] = json!(ts);
+            }
+        }
+        let live = state["live"].clone();
         let base = json!({
             "source":"workbuddy",
             "sessionId":sid,
             "cwd":state["cwd"],
             "agentType":agent_type,
             "roundId":round,
-            "ts":ts
+            "ts":ts,
+            "model":live["model"],
+            "modelName":live["modelName"],
+            "speed":live["speed"],
+            "speedSamples":live["samples"],
         });
         let mut emit = |ev| self.hub.ingest(merge(base.clone(), ev));
         if previous.is_none() || begins {
@@ -502,7 +638,7 @@ impl Collector {
             if self.workbuddy_hook_count == 0 {
                 "等待新的 WorkBuddy Hook；不恢复历史会话"
             } else {
-                "已连接 WorkBuddy Hook 与审批日志（不读取会话文件）"
+                "已连接 WorkBuddy Hook、审批日志与模型用量（会话尾部只读数值）"
             },
         );
         Ok(())
@@ -678,5 +814,70 @@ mod approval_log_tests {
             parse_approval_line("Sandbox approval timed out after 1800000ms, denying"),
             None
         );
+    }
+
+    /// 构造一行会话记录：`step` 递增的 messageId，时间差 2s，输出 200 token。
+    fn step_line(ts: i64, id: &str, out: i64, model: &str) -> String {
+        json!({
+            "type":"function_call",
+            "timestamp":ts,
+            "providerData":{
+                "messageId":id,
+                "model":model,
+                "requestModelName":"DeepSeek-V4.1-Flash",
+                "rawUsage":{"completion_tokens":out,"prompt_tokens":1000}
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn live_stats_reads_model_and_tail_speed() {
+        let mut text = String::new();
+        // 6 步，每步间隔 2s、输出 200 token：窗口应取后 5 步 → 1000 token / 10s = 100 tok/s
+        for i in 0..6 {
+            text.push_str(&step_line(1_000 + i * 2_000, &format!("m{i}"), 200, "deepseek-v4.1-flash"));
+            text.push('\n');
+        }
+        let stats = live_stats_from_tail(&text).expect("应当识别出模型与速度");
+        assert_eq!(stats["model"], "deepseek-v4.1-flash");
+        assert_eq!(stats["samples"], 5);
+        assert_eq!(stats["windowTokens"], 1000);
+        assert_eq!(stats["speed"], 100.0);
+    }
+
+    #[test]
+    fn live_stats_dedupes_rows_of_one_message() {
+        // 同一次回复落三行（思考 / 正文 / 工具调用），只能算一步
+        let mut text = String::new();
+        for _ in 0..3 {
+            text.push_str(&step_line(5_000, "m0", 300, "glm-5.3"));
+            text.push('\n');
+        }
+        text.push_str(&step_line(6_000, "m1", 100, "glm-5.3"));
+        text.push('\n');
+        let stats = live_stats_from_tail(&text).unwrap();
+        assert_eq!(stats["samples"], 1);
+        assert_eq!(stats["windowTokens"], 100);
+        assert_eq!(stats["speed"], 100.0);
+    }
+
+    #[test]
+    fn live_stats_ignores_partial_and_foreign_lines() {
+        // 截断的半行、无 providerData 的行、非 JSON 行都不该影响结果
+        let text = format!(
+            "{{\"type\":\"message\",\"timesta\n{}\n{{\"type\":\"session-meta\"}}\nnonsense\n",
+            step_line(1_000, "m0", 50, "kimi-k3.1-pro")
+        );
+        let stats = live_stats_from_tail(&text).unwrap();
+        assert_eq!(stats["model"], "kimi-k3.1-pro");
+        assert_eq!(stats["samples"], 0);
+        assert_eq!(stats["speed"], 0.0);
+    }
+
+    #[test]
+    fn live_stats_returns_none_without_usage() {
+        assert!(live_stats_from_tail("").is_none());
+        assert!(live_stats_from_tail("{\"type\":\"session-meta\"}\n").is_none());
     }
 }
