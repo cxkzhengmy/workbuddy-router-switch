@@ -733,6 +733,45 @@ export interface CreditStatistics {
   officialUsage?: CreditOfficialUsage;
 }
 
+/** 本地积分账本：某个模型在一个时间窗口内的原始计数（所有单价都由前端据此计算）。 */
+export interface CreditBillingBucket {
+  model: string;
+  records: number;
+  credit: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface CreditBillingDay {
+  /** 本地时区的 `YYYY-MM-DD`，与官方 rangeStart / rangeEnd 同一口径。 */
+  date: string;
+  models: CreditBillingBucket[];
+}
+
+/** GET /api/credits/billing：逐日 × 模型的本地实扣积分与 token 数量。 */
+export interface CreditBilling {
+  generatedAt: number;
+  filesScanned: number;
+  records: number;
+  undatedRecords: number;
+  parseErrors: number;
+  coverageStartAt: number | null;
+  coverageEndAt: number | null;
+  models: string[];
+  totals: CreditBillingBucket[];
+  days: CreditBillingDay[];
+}
+
+/** 官方积分消耗倍率表；`custom` 表示当前用的是用户编辑过的表。 */
+export interface CreditMultipliers {
+  multipliers: Record<string, number>;
+  defaults: Record<string, number>;
+  custom: boolean;
+  updatedAt: number;
+}
+
 export interface TokenStatsTotals { total: number; input: number; output: number; cacheRead: number; cacheWrite: number; uncachedInput: number; records: number; cacheHitRate: number | null; }
 export interface TokenStatsGroup extends TokenStatsTotals { key: string; title?: string | null; project?: string; sessionId?: string; }
 /** 一次模型调用的明细行；`total = input + output + cacheWrite`，`uncachedInput = max(0, input - cacheRead)`，`thinking` 是 `output` 中思考过程的 token 数（回复内容 = max(0, output - thinking)），均与聚合口径一致。 */

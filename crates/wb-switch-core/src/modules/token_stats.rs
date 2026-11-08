@@ -28,11 +28,11 @@ const REQUEST_WINDOW: usize = 500;
 const REQUEST_COLLECT_LIMIT: usize = 4_000;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Usage {
-    input: u64,
-    output: u64,
-    read: u64,
-    write: u64,
+pub(crate) struct Usage {
+    pub(crate) input: u64,
+    pub(crate) output: u64,
+    pub(crate) read: u64,
+    pub(crate) write: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -215,7 +215,7 @@ fn usage_object(value: Option<&Value>) -> Option<&Map<String, Value>> {
 /// top-level usage. Cache-write metadata may only exist on a non-selected
 /// usage object or rawUsage, so those objects are consulted without counting
 /// their input/output again.
-fn usage(value: &Value) -> Option<Usage> {
+pub(crate) fn usage(value: &Value) -> Option<Usage> {
     let provider = value.get("providerData");
     let candidates = [
         value
@@ -248,7 +248,20 @@ fn usage(value: &Value) -> Option<Usage> {
     Some(result)
 }
 
-fn timestamp(value: &Value) -> Option<i64> {
+/// 供积分计费核算复用：走完全相同的解码口径，避免两个页面算出不同的 token 数。
+///
+/// 带 `credit` 的记录偶尔只在 `providerData.rawUsage` 里带 token 计数、没有
+/// 标准的 `message.usage` / `providerData.usage` 对象，此时从 rawUsage 兜底。
+pub(crate) fn credit_record_usage(value: &Value) -> Option<Usage> {
+    usage(value).or_else(|| {
+        let raw = value.get("providerData")?.get("rawUsage")?.as_object()?;
+        // 仍以 input 锚点判定这是一条用量记录，避免把纯元数据对象当用量。
+        field(raw, &["prompt_tokens", "input_tokens", "inputTokens"])?;
+        Some(usage_fields(raw))
+    })
+}
+
+pub(crate) fn timestamp(value: &Value) -> Option<i64> {
     value
         .get("timestamp")
         .or_else(|| value.get("ts"))
@@ -278,7 +291,7 @@ fn hour(value: &Value) -> Option<String> {
     })
 }
 
-fn model(value: &Value) -> String {
+pub(crate) fn model(value: &Value) -> String {
     value
         .get("providerData")
         .and_then(|data| data.get("model"))
@@ -313,7 +326,7 @@ fn thinking(value: &Value) -> u64 {
         .unwrap_or(0)
 }
 
-fn files(root: &Path, output: &mut Vec<PathBuf>) {
+pub(crate) fn files(root: &Path, output: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -732,7 +745,7 @@ fn jsonl_root_candidates(variant: WbVariant, root: &Path) -> Vec<PathBuf> {
 }
 
 /// 某档位下实际存在的 jsonl 扫描根；都不存在则返回空列表（空源，不报错）。
-fn variant_source_roots(variant: WbVariant) -> Vec<PathBuf> {
+pub(crate) fn variant_source_roots(variant: WbVariant) -> Vec<PathBuf> {
     jsonl_root_candidates(variant, &variant.data_root())
         .into_iter()
         .filter(|path| path.is_dir())

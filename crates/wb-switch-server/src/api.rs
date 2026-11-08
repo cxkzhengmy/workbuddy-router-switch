@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 
 use wb_switch_core::modules::{
     account, auth_file, checkin, codebuddy_cli, codebuddy_cn_ide, codebuddy_ide,
-    codebuddy_ide_session, codebuddy_ide_session_sync, config, credit_usage, credits,
+    codebuddy_ide_session, codebuddy_ide_session_sync, config, credit_billing, credit_usage, credits,
     export_import, gateway, jetbrains, limits, notifications, oauth, process, proxy,
     rate_limit_events,
     rate_limit_hook, refresh, rotate, session, session_groups, switch, token_stats, travel, update,
@@ -178,6 +178,12 @@ pub fn router() -> Router {
         .route("/api/checkin/status", get(api_checkin_status))
         .route("/api/credits", post(api_credits))
         .route("/api/credits/stats", get(api_credit_statistics))
+        .route("/api/credits/billing", get(api_credit_billing))
+        .route("/api/credits/multipliers", get(api_credit_multipliers))
+        .route(
+            "/api/credits/multipliers/save",
+            post(api_save_credit_multipliers),
+        )
         .route("/api/token-stats", get(api_token_statistics))
         .route("/api/rate-limits", get(api_rate_limits))
         .route(
@@ -1406,6 +1412,45 @@ fn query_flag_enabled(query: Option<&str>, name: &str) -> bool {
 
 async fn api_credit_statistics(RawQuery(query): RawQuery) -> Response {
     json_ok(credit_usage::get_statistics(query_flag_enabled(query.as_deref(), "refresh")).await)
+}
+
+/// GET /api/credits/billing —— 本地积分账本。首次调用会全量扫描会话日志，
+/// 必须放 blocking 线程，避免占用 axum 的异步运行时。
+async fn api_credit_billing() -> Response {
+    match tokio::task::spawn_blocking(credit_billing::billing_statistics).await {
+        Ok(value) => json_ok(value),
+        Err(error) => json_err(
+            format!("扫描积分账本失败: {error}"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+    }
+}
+
+async fn api_credit_multipliers() -> Response {
+    json_ok(credit_billing::multipliers())
+}
+
+/// POST /api/credits/multipliers/save —— 请求体既可以是倍率对象本身，
+/// 也可以是 `{ "multipliers": { ... } }`（与 Tauri 命令参数形状对齐）。
+async fn api_save_credit_multipliers(Json(body): Json<Value>) -> Response {
+    let submitted = body.get("multipliers").unwrap_or(&body);
+    let Some(object) = submitted.as_object() else {
+        return json_err("倍率表格式不正确".to_string(), StatusCode::BAD_REQUEST);
+    };
+    let mut table = HashMap::new();
+    for (name, rate) in object {
+        let Some(value) = rate.as_f64() else {
+            return json_err(
+                format!("{name} 的倍率不是数字"),
+                StatusCode::BAD_REQUEST,
+            );
+        };
+        table.insert(name.clone(), value);
+    }
+    match credit_billing::save_multipliers(table) {
+        Ok(value) => json_ok(value),
+        Err(error) => json_err(error, StatusCode::BAD_REQUEST),
+    }
 }
 
 async fn api_token_statistics(RawQuery(query): RawQuery) -> Response {

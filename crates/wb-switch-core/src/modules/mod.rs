@@ -7,6 +7,7 @@ pub mod codebuddy_ide;
 pub mod codebuddy_ide_session;
 pub mod codebuddy_ide_session_sync;
 pub mod config;
+pub mod credit_billing;
 pub mod credit_usage;
 pub mod credits;
 pub mod error_log;

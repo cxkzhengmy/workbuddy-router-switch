@@ -13,7 +13,9 @@ import type {
   CheckinConfig,
   CheckinLog,
   CheckinResult,
+  CreditBilling,
   CreditExpiry,
+  CreditMultipliers,
   CreditStatistics,
   DisplayField,
   TokenStatistics,
@@ -74,7 +76,8 @@ const API_BASE = "http://127.0.0.1:57890";
 
 const DEMO_READ_COMMANDS = new Set([
   "get_status", "get_accounts", "get_codebuddy_cli_status", "get_codebuddy_cn_ide_status", "get_codebuddy_ide_status", "get_vscode_ext_status", "get_jetbrains_status", "list_vscode_sessions", "list_codebuddy_ide_sessions", "list_codebuddy_intl_ide_sessions", "vscode_session_links_preview", "codebuddy_ide_session_links_preview", "codebuddy_intl_ide_session_links_preview", "list_account_sessions", "session_links_preview_cross", "list_session_groups", "get_session_group", "preview_session_group_pair", "get_checkin_status",
-  "get_credit_expiry", "get_credit_statistics", "get_auto_checkin_config",
+  "get_credit_expiry", "get_credit_statistics", "get_credit_billing",
+  "get_credit_multipliers", "get_auto_checkin_config",
   "get_token_statistics",
   "get_checkin_logs", "get_auto_rotate_config", "rotate_status", "get_rotate_logs",
   "get_github_config", "check_update", "get_launch_at_login_enabled", "switch_progress",
@@ -191,6 +194,9 @@ const ROUTES: Record<string, Route> = {
   get_checkin_status: { method: "GET", path: "/api/checkin/status" },
   get_credit_expiry: { method: "POST", path: "/api/credits" },
   get_credit_statistics: { method: "GET", path: "/api/credits/stats" },
+  get_credit_billing: { method: "GET", path: "/api/credits/billing" },
+  get_credit_multipliers: { method: "GET", path: "/api/credits/multipliers" },
+  save_credit_multipliers: { method: "POST", path: "/api/credits/multipliers/save" },
   get_token_statistics: { method: "GET", path: "/api/token-stats" },
   get_rate_limits: { method: "GET", path: "/api/rate-limits" },
   get_rate_limit_hook_status: { method: "GET", path: "/api/rate-limits/hook-status" },
@@ -851,6 +857,15 @@ export function getCreditExpiry(accountId: string): Promise<CreditExpiry> {
 
 export function getCreditStatistics(refresh = false): Promise<CreditStatistics> {
   return call("get_credit_statistics", refresh ? { refresh: true } : undefined);
+}
+
+/** 本地积分账本（逐日 × 模型的实扣积分与 token 计数），供计费核算卡使用。 */
+export function getCreditBilling(): Promise<CreditBilling> { return call("get_credit_billing"); }
+
+export function getCreditMultipliers(): Promise<CreditMultipliers> { return call("get_credit_multipliers"); }
+
+export function saveCreditMultipliers(multipliers: Record<string, number>): Promise<CreditMultipliers> {
+  return call("save_credit_multipliers", { multipliers });
 }
 
 export function getTokenStatistics(days?: number): Promise<TokenStatistics> { return call("get_token_statistics", days ? { days } : undefined); }

@@ -1,6 +1,6 @@
 import type {
   AccountMeta, AppStatus, AutoRotateConfig, CheckinConfig, CheckinLog,
-  CodeBuddyCliStatus, CodeBuddyCliSwitchResult, CodeBuddyCnIdeStatus, CreditExpiry, CreditOfficialUsageModel, CreditStatistics,
+  CodeBuddyCliStatus, CodeBuddyCliSwitchResult, CodeBuddyCnIdeStatus, CreditBilling, CreditBillingBucket, CreditExpiry, CreditMultipliers, CreditOfficialUsageModel, CreditStatistics,
   DisplayField,
   GithubConfig, RateLimitHookStatus, RateLimitsPayload, RotateLog, RotateStatus, TokenStatistics, TokenStatsGroup, TokenStatsRequestRow, TokenStatsSource, TokenStatsTotals,
   Session, SessionLinkPreviewGroup, SessionLinksPreview, SessionSyncVerdict, SessionGroupClient, SessionGroupSummary, SessionGroupDetail, SessionGroupList, SessionGroupPairPreview, SessionMemberVersionStatus, TravelConfig, TravelStatus, VscodeExtStatus, VscodeSessionList,
@@ -586,6 +586,78 @@ function demoTokenStatistics(days?: number): TokenStatistics {
   return { generatedAt: Date.now(), rangeDays: days ?? null, sources: [demoTokenSource("workbuddy", 1), emptyTokenSource("workbuddy-ai"), demoTokenSource("codebuddy-cli", 0.58), demoTokenSource("codebuddy-ide", 0.36)] };
 }
 
+/** 演示用积分账本：30 天逐日 × 模型原始计数，模型名与官方演示数据对齐以便看交叉核对。 */
+const BILLING_DEMO_MODELS = [
+  { model: "deepseek-v4-flash", credit: 177, input: 168_000_000, output: 1_240_000, cacheRead: 163_900_000 },
+  // 官方演示账单里没有这个模型，用来展示「仅本地有记录」的差额行。
+  { model: "space-bunny", credit: 20.4, input: 340_000_000, output: 2_100_000, cacheRead: 331_000_000 },
+  { model: "kimi-k3-1", credit: 105, input: 620_000, output: 41_000, cacheRead: 98_000 },
+  { model: "glm-5.2", credit: 2.26, input: 310_000, output: 22_000, cacheRead: 42_000 },
+  { model: "deepseek-v4-pro", credit: 0.12, input: 25_000, output: 2_400, cacheRead: 4_000 },
+  { model: "hy3", credit: 0, input: 6_400_000, output: 90_000, cacheRead: 5_900_000 },
+] as const;
+
+function demoCreditBilling(): CreditBilling {
+  const days = Array.from({ length: 30 }, (_, index) => {
+    const daysAgo = 29 - index;
+    // 固定波动，不用随机数：截图可复现。
+    const wave = 0.78 + ((daysAgo * 7) % 11) / 24;
+    return {
+      date: localDate(daysAgo),
+      models: BILLING_DEMO_MODELS.map((seed) => ({
+        model: seed.model,
+        records: Math.round(46 * wave),
+        credit: Number((seed.credit * wave).toFixed(4)),
+        input: Math.round(seed.input * wave),
+        output: Math.round(seed.output * wave),
+        cacheRead: Math.round(seed.cacheRead * wave),
+        cacheWrite: 0,
+      })),
+    };
+  });
+  const totals = new Map<string, CreditBillingBucket>();
+  let records = 0;
+  for (const day of days) {
+    for (const row of day.models) {
+      records += row.records;
+      const current = totals.get(row.model) ?? {
+        model: row.model, records: 0, credit: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
+      };
+      current.records += row.records;
+      current.credit = Number((current.credit + row.credit).toFixed(4));
+      current.input += row.input;
+      current.output += row.output;
+      current.cacheRead += row.cacheRead;
+      current.cacheWrite += row.cacheWrite;
+      totals.set(row.model, current);
+    }
+  }
+  return {
+    generatedAt: Date.now(),
+    filesScanned: 232,
+    records,
+    undatedRecords: 0,
+    parseErrors: 0,
+    coverageStartAt: atLocalTime(29, 0, 0),
+    coverageEndAt: atLocalTime(0, 12, 0),
+    models: BILLING_DEMO_MODELS.map((seed) => seed.model),
+    totals: [...totals.values()].sort((left, right) => right.credit - left.credit),
+    days,
+  };
+}
+
+function demoCreditMultipliers(): CreditMultipliers {
+  const multipliers: Record<string, number> = {
+    hy4: 0, hy3: 0,
+    "deepseek-v4.1-flash": 0.11, "glm-5.3": 0.69, "glm-5.3-flash": 0.08,
+    "glm-5.2": 0.79, "space-bunny": 0.08, "minimax-m3.1-flash": 0.08,
+    "kimi-k3.1-pro": 0.97,
+    // 演示数据用的是官方账单里的短名，这里补上别名以展示倍率对照。
+    "deepseek-v4-flash": 0.11, "kimi-k3-1": 0.97, "deepseek-v4-pro": 0.35,
+  };
+  return { multipliers, defaults: { ...multipliers }, custom: false, updatedAt: 0 };
+}
+
 /** 演示用的 IDE 会话列表：国内版 / 国际版共用同一套存储，只有来源 uid 不同。 */
 function demoIdeSessionList(sourceUid: string): VscodeSessionList {
   return {
@@ -921,6 +993,8 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
     case "get_checkin_status": return { ok: true, todayCheckedIn: true };
     case "get_credit_expiry": return creditExpiry(String(args?.accountId ?? ""));
     case "get_credit_statistics": return buildStatistics();
+    case "get_credit_billing": return demoCreditBilling();
+    case "get_credit_multipliers": return demoCreditMultipliers();
     case "get_token_statistics": return demoTokenStatistics(typeof args?.days === "number" ? args.days : undefined);
     case "get_auto_checkin_config": return checkinConfig();
     case "get_checkin_logs": return { logs: checkinLogs() };

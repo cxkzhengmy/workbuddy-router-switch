@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 use wb_switch_core::modules::{
     account, auth_file, checkin, codebuddy_cli, codebuddy_cn_ide, codebuddy_ide,
-    codebuddy_ide_session, codebuddy_ide_session_sync, credit_usage, credits, error_log,
+    codebuddy_ide_session, codebuddy_ide_session_sync, credit_billing, credit_usage, credits, error_log,
     export_import, gateway, gateway_port, jetbrains, limits, notifications, oauth, process,
     proxy, rate_limit_events, rate_limit_hook, refresh, rotate, session, session_groups, switch,
     token_stats, travel, update, variant::WbVariant, vscode_ext, vscode_session, vscode_session_sync,
@@ -1011,6 +1011,31 @@ pub async fn get_credit_expiry(account_id: String) -> Result<Value, String> {
 #[tauri::command]
 pub async fn get_credit_statistics(refresh: Option<bool>) -> Value {
     credit_usage::get_statistics(refresh.unwrap_or(false)).await
+}
+
+/// GET /api/credits/billing —— 本地积分账本（逐日 × 模型的实扣积分与 token 计数）。
+///
+/// 与 `get_token_statistics` 同用 blocking 线程：首次调用要扫数百 MB 的会话日志，
+/// 放主线程会把窗口拖住。返回 `Arc<Value>` 避免缓存命中时深拷贝。
+#[tauri::command]
+pub async fn get_credit_billing() -> Result<std::sync::Arc<Value>, String> {
+    tauri::async_runtime::spawn_blocking(credit_billing::billing_statistics)
+        .await
+        .map_err(|error| format!("扫描积分账本失败: {error}"))
+}
+
+/// GET /api/credits/multipliers —— 官方倍率表（默认表或用户自定义表）。
+#[tauri::command]
+pub fn get_credit_multipliers() -> Value {
+    credit_billing::multipliers()
+}
+
+/// POST /api/credits/multipliers/save —— 保存用户编辑的官方倍率表。
+#[tauri::command]
+pub fn save_credit_multipliers(
+    multipliers: std::collections::HashMap<String, f64>,
+) -> Result<Value, String> {
+    credit_billing::save_multipliers(multipliers)
 }
 
 #[tauri::command]

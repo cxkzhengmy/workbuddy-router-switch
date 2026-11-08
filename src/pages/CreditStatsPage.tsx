@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { CreditBillingCard } from "@/components/credit-billing-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DemoAction } from "@/components/demo-action";
@@ -1952,6 +1953,8 @@ export default function CreditStatsPage() {
                   officialUsage={official}
                 />
               )}
+
+              <CreditBillingCard official={official} />
 
               {/* 与下方「积分明细」重复，先隐藏。
               <AccountTable stats={stats} officialUsage={officialUsage} selectedId={selectedId} onSelect={setSelectedId} />
