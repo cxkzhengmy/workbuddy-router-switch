@@ -235,6 +235,7 @@ pub fn router() -> Router {
         .route("/api/proxy/external", get(api_proxy_external_config))
         .route("/api/proxy/external/save", post(api_proxy_save_external_config))
         .route("/api/proxy/external/models", post(api_proxy_external_models))
+        .route("/api/proxy/external/health", get(api_proxy_external_health))
         .route("/api/proxy/keys/create", post(api_proxy_create_key))
         .route("/api/proxy/keys/reveal", post(api_proxy_reveal_key))
         .route("/api/proxy/keys/enabled", post(api_proxy_set_key_enabled))
@@ -2015,4 +2016,8 @@ async fn api_proxy_save_external_config(Json(body): Json<Value>) -> Response {
 
 async fn api_proxy_external_models() -> Response {
     json_ok(proxy::external_models().await)
+}
+
+async fn api_proxy_external_health() -> Response {
+    json_ok(proxy::external_health().await)
 }

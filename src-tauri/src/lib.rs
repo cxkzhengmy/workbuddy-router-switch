@@ -341,6 +341,7 @@ pub fn run() {
             commands::proxy_external_config,
             commands::proxy_save_external_config,
             commands::proxy_external_models,
+            commands::proxy_external_health,
             // 端口工具：网关端口被别的进程占着时，界面上能查能杀。
             commands::describe_port_owner,
             commands::kill_port_owner,

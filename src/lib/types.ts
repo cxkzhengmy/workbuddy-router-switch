@@ -1252,7 +1252,7 @@ export interface ProxyAccountConfig {
   accounts: ProxyAccountInfo[];
 }
 
-/** 外部上游（OpenCode 等）配置视图。Key 只回末四位。 */
+/** 本机 doubao2api 配置视图。Key 只回末四位，不回明文。 */
 export interface ProxyExternalConfig {
   enabled: boolean;
   baseUrl: string;
@@ -1261,4 +1261,23 @@ export interface ProxyExternalConfig {
   models: string[];
   userAgent: string;
   prefix: string;
+  /** 上游提供方，1.0.14 起固定为 doubao。 */
+  provider: string;
+  /** 推荐的纯对话模型，可一键填入。 */
+  chatModelPreset: string[];
+  /** 扫码登录 / 风控处理入口（纯地址，可显示）。 */
+  adminUrl: string;
+  /** 带鉴权参数的跳转地址，只用作链接 href，不作为文本展示。 */
+  adminLink: string;
+}
+
+/** doubao2api 在线状态。服务在跑 ≠ 能用，登录态过期时聊天会失败。 */
+export interface ProxyExternalHealth {
+  ok: boolean;
+  reachable: boolean;
+  loggedIn: boolean | null;
+  needsCaptcha: boolean | null;
+  statusText: string;
+  url: string;
+  message: string;
 }

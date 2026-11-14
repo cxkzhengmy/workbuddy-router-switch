@@ -1604,7 +1604,7 @@ pub async fn proxy_save_account_config(config: Value) -> Result<Value, String> {
     proxy::save_account_config(&config)
 }
 
-/// 外部上游（OpenCode 等）配置。
+/// 外部上游（本机 doubao2api 豆包反代）配置。
 #[tauri::command]
 pub async fn proxy_external_config() -> Result<Value, String> {
     Ok(proxy::external_config())
@@ -1618,6 +1618,12 @@ pub async fn proxy_save_external_config(config: Value) -> Result<Value, String> 
 #[tauri::command]
 pub async fn proxy_external_models() -> Result<Value, String> {
     Ok(proxy::external_models().await)
+}
+
+/// 服务在线 / 扫码登录 / 风控验证码状态。
+#[tauri::command]
+pub async fn proxy_external_health() -> Result<Value, String> {
+    Ok(proxy::external_health().await)
 }
 
 // ---------------------------------------------------------------------------

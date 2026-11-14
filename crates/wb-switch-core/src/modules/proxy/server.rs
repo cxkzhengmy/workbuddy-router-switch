@@ -224,7 +224,7 @@ async fn models(State(_): State<SharedState>, headers: HeaderMap) -> Response {
         })
         .collect();
 
-    // 外部上游的模型一并列出（带 opencode/ 前缀）。Key 白名单同样约束它们——
+    // 本机豆包反代的模型一并列出（带 doubao/ 前缀）。Key 白名单同样约束它们——
     // 否则「限定了模型的 Key」会因为这个入口拿到未授权的模型。
     for model in external::models_for_listing() {
         let id = model.get("id").cloned().unwrap_or(Value::Null);
@@ -278,7 +278,7 @@ async fn chat(State(_): State<SharedState>, headers: HeaderMap, body: Bytes) -> 
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    // 外部上游（OpenCode 等）：带前缀的模型直接转发，不经过 WorkBuddy
+    // 本机豆包反代：带 doubao/ 前缀的模型直接转发，不经过 WorkBuddy
     // 的账号链路——那边一套身份头、会话 id、流式聚合在这里都用不上。
     if let Some(external_model) = model.strip_prefix(external::PREFIX) {
         return external_chat(external_model, &payload, &key_id, client_stream).await;
@@ -447,7 +447,7 @@ async fn try_account(
     Err((code, text, retryable))
 }
 
-/// 外部上游的一次对话：请求体原样转发，响应体原样透传。
+/// 豆包反代的一次对话：请求体原样转发，响应体原样透传。
 ///
 /// 这里刻意不做协议转换——对端就是标准 OpenAI 接口。唯一要额外做的是
 /// 记账：把上游返回的 `usage` 读出来写台账，否则外部模型的消耗在页面上
@@ -466,7 +466,7 @@ async fn external_chat(
         Err((code, message)) => {
             store::record(&RequestRecord {
                 key_id: Some(key_id.to_string()),
-                account_label: Some("opencode".to_string()),
+                account_label: Some("doubao".to_string()),
                 model: display_model,
                 stream: client_stream,
                 status: code,
@@ -488,7 +488,7 @@ async fn external_chat(
         let code = status.as_u16();
         store::record(&RequestRecord {
             key_id: Some(key_id.to_string()),
-            account_label: Some("opencode".to_string()),
+            account_label: Some("doubao".to_string()),
             model: display_model,
             stream: client_stream,
             status: code,
@@ -515,7 +515,7 @@ async fn external_chat(
     store::record(&RequestRecord {
         key_id: Some(key_id.to_string()),
         account_uid: None,
-        account_label: Some("opencode".to_string()),
+        account_label: Some("doubao".to_string()),
         model: display_model,
         stream: false,
         status: 200,
@@ -572,7 +572,7 @@ fn stream_external(
             store::record(&RequestRecord {
                 key_id: Some(key_id),
                 account_uid: None,
-                account_label: Some("opencode".to_string()),
+                account_label: Some("doubao".to_string()),
                 model,
                 stream: true,
                 status: if failed.is_some() { 499 } else { 200 },

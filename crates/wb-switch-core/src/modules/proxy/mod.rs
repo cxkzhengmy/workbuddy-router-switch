@@ -294,7 +294,7 @@ pub fn save_account_config(input: &Value) -> Result<Value, String> {
 }
 
 // ---------------------------------------------------------------------------
-// 外部上游（OpenCode 等）
+// 外部上游（本机 doubao2api 豆包反代）
 // ---------------------------------------------------------------------------
 
 pub fn external_config() -> Value {
@@ -311,6 +311,12 @@ pub async fn external_models() -> Value {
         Ok(models) => json!({ "ok": true, "models": models }),
         Err(err) => json!({ "ok": false, "error": err, "models": [] }),
     }
+}
+
+/// 探测 doubao2api 在线状态与扫码登录状态。
+/// 服务在跑不等于能用，所以界面要主动展示这一项。
+pub async fn external_health() -> Value {
+    external::health().await
 }
 
 // ---------------------------------------------------------------------------

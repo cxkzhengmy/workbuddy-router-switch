@@ -808,6 +808,49 @@ function buildDemoSessionGroups(
 }
 
 /** Read-only demo response provider. It never reads or mutates real user data. */
+/** 演示用的豆包反代配置：与本机部署同形态，但 Key 与地址都是虚构的。 */
+const DEMO_DOUBAO_MODELS = ["doubao", "doubao-pro", "doubao-think", "doubao-expert"] as const;
+
+function demoExternalConfig() {
+  return {
+    enabled: true,
+    baseUrl: "http://127.0.0.1:9090/v1",
+    hasKey: true,
+    keyTail: "7f3a",
+    models: [...DEMO_DOUBAO_MODELS],
+    userAgent: "wb-switch",
+    prefix: "doubao/",
+    provider: "doubao",
+    chatModelPreset: [...DEMO_DOUBAO_MODELS],
+    adminUrl: "http://127.0.0.1:9090/admin",
+    adminLink: "http://127.0.0.1:9090/admin?key=demo-key",
+  };
+}
+
+/** 目录与上游 `/v1/models` 一致：4 个豆包对话、16 个千问通道、3 个生成类。 */
+function demoExternalModels(): string[] {
+  return [
+    ...DEMO_DOUBAO_MODELS,
+    "qianwen", "qianwen-max", "qianwen-max-think", "qianwen-think", "qianwen-coder",
+    "qianwen-flash", "qianwen-search", "Qwen", "Qwen3.7-Max", "Qwen3.5-Plus",
+    "Qwen3.5-Flash", "Qwen3-Max", "Qwen3-Max-Thinking-Preview", "Qwen3-Coder",
+    "Qwen3-Coder-Flash", "Qwen3-235B-A22B-2507",
+    "doubao-image", "doubao-music", "doubao-video",
+  ];
+}
+
+function demoExternalHealth() {
+  return {
+    ok: true,
+    reachable: true,
+    loggedIn: true,
+    needsCaptcha: false,
+    statusText: "ok",
+    url: "http://127.0.0.1:9090/health",
+    message: "服务正常（ok），已登录",
+  };
+}
+
 export function screenshotDemoResponse(command: string, args?: Record<string, unknown>): unknown {
   const demoAccounts = hydratedAccounts();
   const appStatus: AppStatus = { running: true, authFile: "/demo/workbuddy/auth.json", current: { uid: demoAccounts[0].uid, nickname: demoAccounts[0].nickname, email: demoAccounts[0].email }, appPath: "/demo/WorkBuddy.app", version: "0.1.24" };
@@ -995,6 +1038,9 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
     case "get_credit_statistics": return buildStatistics();
     case "get_credit_billing": return demoCreditBilling();
     case "get_credit_multipliers": return demoCreditMultipliers();
+    case "proxy_external_config": return demoExternalConfig();
+    case "proxy_external_models": return { ok: true, models: demoExternalModels() };
+    case "proxy_external_health": return demoExternalHealth();
     case "get_token_statistics": return demoTokenStatistics(typeof args?.days === "number" ? args.days : undefined);
     case "get_auto_checkin_config": return checkinConfig();
     case "get_checkin_logs": return { logs: checkinLogs() };

@@ -19,7 +19,7 @@
 | 积分到期 | 自动查询各账号余额与到期时间，7 天内到期高亮并按紧迫度排序 |
 | 自动轮换 | 后台把积分最紧迫的账号设为 CLI 默认账号，检测到会话运行时跳过 |
 | 内置网关 | OpenAI 兼容服务，API Key 管理、模型白名单、逐请求用量与速度统计 |
-| 外部模型 | 把网关再接一个 OpenAI 兼容上游，模型以 `opencode/<id>` 暴露。**当前不可用**，见下方说明 |
+| 外部模型 | 把网关接到本机 doubao2api（豆包反代），模型以 `doubao/<id>` 暴露，只代理聊天，见下方说明 |
 | 会话悬浮窗 | 桌面常驻状态栏，显示 Codex / WorkBuddy / CodeBuddy 会话状态，点击回到原会话 |
 | 应用内更新 | 自动检查本项目 Release，下载签名包并校验后一键重启升级，不用再去网页下载安装包 |
 
@@ -79,13 +79,20 @@ for chunk in client.chat.completions.create(
 > 端口沿用 workbuddy2api-hub 的 `8788`，原来指向 hub 的客户端不用改任何配置。
 > 与 hub 的区别是不做账号池轮询（账号跟界面当前激活的那个走），也不带独立 Web 看板（看板职责由桌面端界面承担）。
 
-### 外部模型（当前不可用）
+### 外部模型（豆包反代）
 
-网关本来还支持再接一个外部 OpenAI 兼容上游：填 Base URL 和 Key，对端的模型就以 `opencode/<模型 id>` 出现在模型列表里，和 WorkBuddy 自己的模型并存。前缀不是装饰——两边都有 `deepseek-v4.1-flash` 这类同名模型，不加前缀没法路由。
+1.0.14 起，外部通道从「OpenCode 公网免费层」换成**本机 [doubao2api](https://github.com/wangchuxiaoji-oss/doubao2api)**。旧通路在 1.0.12 已判定不可用：免费模型只允许官方客户端、要 Bun 的 TLS/HTTP2 指纹、UA `<1.18` 先返回 `426 UpgradeRequired`，且与官方 CLI 共享每日额度；普通 OpenAI 客户端怎么配都拿不到 200。
 
-预置的上游是 OpenCode。绕这一层的原因：它的免费模型只在自家客户端里能用，直接打 Zen 端点会返回 `429 Free models work in OpenCode`，社区此前的做法是在本机跑 `opencode2api` 之类代理、借用 OpenCode CLI 的登录态再转成标准接口。
+新上游是跑在本机 `http://127.0.0.1:9090/v1` 的 Python/FastAPI 服务，用 Playwright 维持豆包网页版登录态，对外提供标准 OpenAI 接口。**服务在跑不等于能用**：首次使用、Cookie 过期或命中风控时，需要到 `/admin` 用豆包 App 扫码 / 处理验证码。页面顶部的「服务状态」会直接探测 `/health` 的 `logged_in` 与 `needs_captcha`。
 
-**这条路现在走不通了**，上游已经限制，即使配上代理也调不通。页面和接口都保留着——Base URL 不写死 `opencode.ai`，等上游放开、或者你想接别的兼容服务时可以直接用。目前请以跟随 WorkBuddy 账号的内置网关为主。
+- 模型以 `doubao/<id>` 出现在网关 `/v1/models` 里，前缀用于和 WorkBuddy 自带模型区分路由。推荐 `doubao`、`doubao-pro`、`doubao-think`、`doubao-expert` 四个对话模型，页面有「一键填入」。
+- **只代理聊天**：`/v1/chat/completions` 原样转发。图片 / 视频 / 音乐生成端点不在网关代理范围（超时与缓冲策略完全不同），生成类模型在界面上标注且不可勾选，Rust 侧 `save` / `forward` 也会二次拒绝；要用生成能力请直连 9090。
+- 上游目录里的千问系模型属于另一条可选通道，需单独设置 `QIANWEN_ENABLED=true`，默认部署不开启，界面只做提示。
+- 上游用 `DOUBAO_API_KEY` 保护 `/v1/*`；在页面填同一个 Key。`adminLink` 会自动带上 `?key=`，配置视图本身不回显明文 Key。
+- 设置存在 `proxy.db` 的 `external_doubao` 键，**不继承**旧的 `external_opencode` 配置，避免显示一个永远连不上的地址。
+- 调用会记入网关请求台账，账号标签为 `doubao`；用量取上游返回的 `usage`。
+
+本机部署步骤（仓库外层，不随本仓库发布）见维护手册「豆包反代本机部署」一节。
 
 ## 积分计费核算
 
