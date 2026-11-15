@@ -2940,6 +2940,29 @@ fn finish_answer(answer: &mut Answer, conv: &Converter) {
 // 视图
 // ---------------------------------------------------------------------------
 
+/// 「这个部署连到哪」的端点表。
+///
+/// 认证与模型网关是两个域名：认证（含额度接口）在 `auth`，聊天走 `api`。
+/// 国际版的模型网关按区域分 SG / US，靠账号的 region 选，所以标出来。
+fn endpoints_of(r: &Realm) -> Vec<Value> {
+    let mut out = vec![json!({ "host": bare_host(r.auth), "role": "认证与额度" })];
+    match r.api_us {
+        Some(us) => {
+            out.push(json!({ "host": bare_host(r.api), "role": "模型网关", "region": "SG" }));
+            out.push(json!({ "host": bare_host(us), "role": "模型网关", "region": "US" }));
+        }
+        None => out.push(json!({ "host": bare_host(r.api), "role": "模型网关" })),
+    }
+    out
+}
+
+/// 去掉协议与末尾斜杠，只留主机名——界面上要的是 `api.trae.cn` 这种。
+fn bare_host(url: &str) -> &str {
+    url.trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+}
+
 pub fn view() -> Value {
     let cfg = config();
     let acc = account();
@@ -2958,8 +2981,20 @@ pub fn view() -> Value {
         "realms": realm_ids()
             .iter()
             .filter_map(|id| realm(id))
-            .map(|r| json!({ "id": r.id, "name": r.name, "web": r.web, "endpoint": r.api }))
+            .map(|r| json!({
+                "id": r.id,
+                "name": r.name,
+                "web": r.web,
+                "auth": r.auth,
+                "endpoint": r.api,
+                // 界面上那张「这个部署连到哪」的表用：每个域名的用途分开写，
+                // 国际版的模型网关按区域有两个，混成一个字符串就说不清了。
+                "endpoints": endpoints_of(r),
+                "clientVersion": r.client_version,
+            }))
             .collect::<Vec<_>>(),
+        // 应用自己的版本，给「通道信息」里的版本列用，省得前端再单独查一次状态。
+        "appVersion": env!("CARGO_PKG_VERSION"),
         "models": cfg.models,
         "prefix": PREFIX,
         "provider": "trae",
@@ -3139,6 +3174,48 @@ mod tests {
         assert_eq!(v["used"], json!(0.0));
         assert_eq!(v["packs"].as_array().map(|a| a.len()), Some(0));
         assert!(v["expiresAt"].is_null());
+    }
+
+    #[test]
+    fn host_is_stripped_of_scheme_and_trailing_slash() {
+        assert_eq!(bare_host("https://api.trae.cn"), "api.trae.cn");
+        assert_eq!(bare_host("https://trae-api-cn.mchost.guru/"), "trae-api-cn.mchost.guru");
+        assert_eq!(bare_host("http://127.0.0.1:8788"), "127.0.0.1:8788");
+    }
+
+    #[test]
+    fn endpoints_separate_auth_from_model_gateway() {
+        // CN：认证与模型网关是两个域名，顺序固定为「认证在前」。
+        let cn = endpoints_of(&REALM_CN);
+        assert_eq!(cn.len(), 2);
+        assert_eq!(cn[0]["host"], json!("api.trae.cn"));
+        assert_eq!(cn[0]["role"], json!("认证与额度"));
+        assert_eq!(cn[1]["host"], json!("trae-api-cn.mchost.guru"));
+        assert_eq!(cn[1]["role"], json!("模型网关"));
+        assert!(cn[1].get("region").is_none(), "CN 只有一个网关，不该标区域");
+
+        // Global：模型网关按区域分 SG / US，都要带上区域才说得清。
+        let global = endpoints_of(&REALM_GLOBAL);
+        assert_eq!(global.len(), 3);
+        assert_eq!(global[0]["host"], json!("growsg-normal.trae.ai"));
+        assert_eq!(global[1]["region"], json!("SG"));
+        assert_eq!(global[1]["host"], json!("coresg-normal.trae.ai"));
+        assert_eq!(global[2]["region"], json!("US"));
+        assert_eq!(global[2]["host"], json!("coreva-normal.trae.ai"));
+    }
+
+    #[test]
+    fn view_exposes_realm_table_for_the_about_dialog() {
+        // 「通道信息」弹窗直接渲染这几个字段，缺了界面上就是空白列。
+        let v = view();
+        assert!(v.get("appVersion").and_then(Value::as_str).is_some_and(|s| !s.is_empty()));
+        let realms = v["realms"].as_array().expect("realms 应该是数组");
+        assert_eq!(realms.len(), 2);
+        for r in realms {
+            assert!(r["auth"].as_str().is_some_and(|s| !s.is_empty()), "缺 auth");
+            assert!(r["clientVersion"].as_str().is_some_and(|s| !s.is_empty()), "缺 clientVersion");
+            assert!(r["endpoints"].as_array().is_some_and(|a| !a.is_empty()), "缺 endpoints");
+        }
     }
 
     #[test]

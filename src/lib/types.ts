@@ -1259,8 +1259,14 @@ export interface ProxyExternalRealm {
   name: string;
   /** 授权页站点。 */
   web: string;
-  /** 模型网关域名。 */
+  /** 认证与额度域名。 */
+  auth: string;
+  /** 模型网关域名（国际版只给 SG，US 在 endpoints 里）。 */
   endpoint: string;
+  /** 「这个部署连到哪」的完整端点表，按用途分开。 */
+  endpoints: { host: string; role: string; region?: string }[];
+  /** 伪装成的 Trae 客户端版本，也是准入条件。 */
+  clientVersion: string;
 }
 
 /** 目录拉不到时给界面用的兜底模型。 */
@@ -1287,6 +1293,8 @@ export interface ProxyExternalConfig {
   /** 当前选的部署 id。 */
   realm: string;
   realms: ProxyExternalRealm[];
+  /** 应用自己的版本，通道信息里显示。 */
+  appVersion: string;
   models: string[];
   prefix: string;
   /** 上游提供方，1.0.14 之后固定为 trae。 */

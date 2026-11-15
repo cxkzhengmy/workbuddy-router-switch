@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  Boxes,
   CircleAlert,
   CircleCheck,
   ExternalLink,
@@ -19,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -69,6 +71,7 @@ export default function ExternalModelsPage() {
   const [signInUrl, setSignInUrl] = useState("");
   const [remote, setRemote] = useState<string[] | null>(null);
   const [manual, setManual] = useState("");
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   const [enabled, setEnabled] = useState(false);
   const [realm, setRealm] = useState("trae-cn");
@@ -262,16 +265,23 @@ export default function ExternalModelsPage() {
       ? { variant: "destructive" as const, text: "令牌过期" }
       : { variant: "default" as const, text: "可用" };
   const quotaPct = ent?.ok ? Math.min(100, Math.max(0, Math.round(ent.ratio * 100))) : 0;
+  const currentRealmInfo = cfg?.realms.find((r) => r.id === realm);
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">外部模型</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          把内置网关接到 Trae 的模型上。模型会以{" "}
-          <code className="font-mono">{cfg?.prefix ?? "trae/"}&lt;id&gt;</code> 的形式出现在{" "}
-          <code className="font-mono">/v1/models</code> 里，与 WorkBuddy 自己的模型并存。
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">外部模型</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            把内置网关接到 Trae 的模型上。模型会以{" "}
+            <code className="font-mono">{cfg?.prefix ?? "trae/"}&lt;id&gt;</code> 的形式出现在{" "}
+            <code className="font-mono">/v1/models</code> 里，与 WorkBuddy 自己的模型并存。
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setAboutOpen(true)}>
+          <Info className="size-3.5" />
+          通道信息
+        </Button>
       </div>
 
       <Alert className="border-sky-500/30 bg-sky-500/5">
@@ -561,6 +571,118 @@ export default function ExternalModelsPage() {
           </p>
         </CardContent>
       </Card>
+
+      {/* 通道信息：把「这是什么、连到哪、靠不靠得住」一次说清，避免用户去翻文档。 */}
+      <Dialog open={aboutOpen} onOpenChange={setAboutOpen}>
+        <DialogContent className="max-w-[calc(100%-2rem)] sm:max-w-2xl" showCloseButton={false}>
+          <div className="flex items-start gap-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-foreground/[0.06]">
+              <Boxes className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="text-base leading-tight">Trae</DialogTitle>
+              <DialogDescription className="mt-0.5 text-xs">
+                WorkBuddy Router · 内置通道
+              </DialogDescription>
+            </div>
+            <Badge variant={signedIn ? "default" : "secondary"}>{signedIn ? "已登录" : "未登录"}</Badge>
+          </div>
+
+          <p className="text-sm leading-relaxed">
+            {"用 Trae CN（trae.cn）与 Trae 国际版（trae.ai）账号使用各自的模型，含免费版，用 Trae 自己的浏览器登录。实验性。"}
+          </p>
+
+          <div className="grid grid-cols-2 gap-y-3 rounded-md border py-3 text-xs sm:grid-cols-4 sm:divide-x">
+            {[
+              { label: "版本", value: `v${cfg?.appVersion ?? "?"}` },
+              { label: "许可证", value: "MIT" },
+              { label: "客户端", value: currentRealmInfo?.clientVersion ?? "—" },
+            ].map((meta) => (
+              <div key={meta.label} className="px-3">
+                <p className="text-muted-foreground">{meta.label}</p>
+                <p className="mt-0.5 font-mono font-medium">{meta.value}</p>
+              </div>
+            ))}
+            <div className="px-3">
+              <p className="text-muted-foreground">登录</p>
+              <p className="mt-0.5 font-mono font-medium">
+                {(cfg?.realms ?? []).map((r) => (
+                  <span key={r.id} className="block whitespace-nowrap">
+                    {r.id}
+                  </span>
+                ))}
+                {!cfg?.realms?.length && "—"}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2 text-xs leading-relaxed text-muted-foreground">
+            <p>
+              {"两个部署，一个通道："}
+              <strong className="text-foreground">Trae CN</strong>
+              {"（trae.cn）与 "}
+              <strong className="text-foreground">Trae 国际版</strong>
+              {"（trae.ai）。各自用自己账号登录，免费版一样能用。"}
+            </p>
+            <p>
+              {"两个是各自独立的服务——域名不同、客户端不同、模型清单几乎不重合——所以是两个部署而不是一个设置。它们共用一套实现：请求、流式转换和工具调用都是同一份代码，差异只在 "}
+              <code className="font-mono">trae.rs</code>
+              {" 顶部的 realm 表里。"}
+            </p>
+          </div>
+
+          <div className="overflow-hidden rounded-md border">
+            <table className="w-full table-fixed text-xs">
+              <thead className="bg-muted/40 text-muted-foreground">
+                <tr>
+                  <th className="w-[105px] px-3 py-2 text-left font-medium">Provider</th>
+                  <th className="w-[110px] px-3 py-2 text-left font-medium">登录到</th>
+                  <th className="px-3 py-2 text-left font-medium">Endpoints</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {(cfg?.realms ?? []).map((r) => (
+                  <tr key={r.id} className="align-top">
+                    <td className="px-3 py-2 font-mono whitespace-nowrap">{r.id}</td>
+                    <td className="px-3 py-2">
+                      <span className="whitespace-nowrap">{r.name}</span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        ({r.web.replace("https://www.", "").replace("https://", "")})
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-[11px] leading-relaxed break-words">
+                      {r.endpoints.map((e, i) => (
+                        <span key={e.host}>
+                          {i > 0 && ", "}
+                          {e.host}
+                          {e.region ? <span className="text-muted-foreground"> ({e.region})</span> : null}
+                        </span>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="rounded-md bg-muted/50 p-3 text-xs leading-relaxed">
+            <p className="font-medium text-foreground">实验性（两者都是）</p>
+            <p className="mt-1 text-muted-foreground">
+              {"Trae 没有公开的接口文档。协议是从社区的开源转发实现反推出来的，这里在真实账号上验证过登录、目录、聊天与额度，但没有覆盖所有模型与所有边缘情况。失败时界面会把 Trae 的原始错误显示出来，报问题时请附上那句。"}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-[11px] text-muted-foreground">
+            <span>
+              通道实现移植自 magpie 社区的{" "}
+              <code className="font-mono">@magpie-community/opencode-trae-auth</code>（MIT）。
+            </span>
+            <Button variant="outline" size="sm" onClick={() => setAboutOpen(false)}>
+              关闭
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
