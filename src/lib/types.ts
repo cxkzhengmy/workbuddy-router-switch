@@ -1253,31 +1253,68 @@ export interface ProxyAccountConfig {
 }
 
 /** 本机 doubao2api 配置视图。Key 只回末四位，不回明文。 */
-export interface ProxyExternalConfig {
-  enabled: boolean;
-  baseUrl: string;
-  hasKey: boolean;
-  keyTail: string;
-  models: string[];
-  userAgent: string;
-  prefix: string;
-  /** 上游提供方，1.0.14 起固定为 doubao。 */
-  provider: string;
-  /** 推荐的纯对话模型，可一键填入。 */
-  chatModelPreset: string[];
-  /** 扫码登录 / 风控处理入口（纯地址，可显示）。 */
-  adminUrl: string;
-  /** 带鉴权参数的跳转地址，只用作链接 href，不作为文本展示。 */
-  adminLink: string;
+/** 一个 Trae 部署（trae.cn / trae.ai）。 */
+export interface ProxyExternalRealm {
+  id: string;
+  name: string;
+  /** 授权页站点。 */
+  web: string;
+  /** 模型网关域名。 */
+  endpoint: string;
 }
 
-/** doubao2api 在线状态。服务在跑 ≠ 能用，登录态过期时聊天会失败。 */
-export interface ProxyExternalHealth {
-  ok: boolean;
-  reachable: boolean;
-  loggedIn: boolean | null;
-  needsCaptcha: boolean | null;
-  statusText: string;
+/** 目录拉不到时给界面用的兜底模型。 */
+export interface ProxyExternalModelPreset {
+  id: string;
+  name: string;
+  /** 上下文窗口。 */
+  context: number;
+  /** 是否收图（Trae 的列表按模型标注 multimodal）。 */
+  sees: boolean;
+}
+
+/** 浏览器登录的进度。 */
+export interface ProxyExternalSignIn {
+  state: "idle" | "waiting" | "done" | "failed";
   url: string;
+  message: string;
+  realm: string;
+}
+
+/** 外部模型（Trae 反代）配置视图。 */
+export interface ProxyExternalConfig {
+  enabled: boolean;
+  /** 当前选的部署 id。 */
+  realm: string;
+  realms: ProxyExternalRealm[];
+  models: string[];
+  prefix: string;
+  /** 上游提供方，1.0.14 之后固定为 trae。 */
+  provider: string;
+  signedIn: boolean;
+  accountName: string;
+  accountUid: string;
+  accountRealm: string;
+  /** 令牌过期时间（毫秒时间戳）。 */
+  expiresAt: number;
+  /** 本机设备 id：Trae 靠它认出「同一台机器」。 */
+  deviceId: string;
+  fallbackModels: ProxyExternalModelPreset[];
+  signIn: ProxyExternalSignIn;
+}
+
+/** 账号状态。没登录时 ok 为 false，signedIn 为 false。 */
+export interface ProxyExternalStatus {
+  ok: boolean;
+  signedIn: boolean;
+  realm: string;
+  name?: string;
+  uid?: string;
+  deviceId?: string;
+  expiresAt?: number;
+  /** 令牌还有多少分钟。没登录时为 null。 */
+  expiresInMin: number | null;
+  /** 目录里的模型数。拉不到时为 null。 */
+  models: number | null;
   message: string;
 }

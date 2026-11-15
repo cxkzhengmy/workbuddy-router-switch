@@ -92,7 +92,8 @@ async fn main() {
     }
 
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-    let overview = proxy::overview(7);
+    // overview 的区间是 [from, until)，由调用方按本地时区算好再传。
+    let overview = proxy::overview(7, None, None);
     println!("今日汇总：{}", overview["today"]);
 
     // 流式：上游本身就是 SSE，验证网关是边收边转发而不是攒完再发。

@@ -808,46 +808,55 @@ function buildDemoSessionGroups(
 }
 
 /** Read-only demo response provider. It never reads or mutates real user data. */
-/** 演示用的豆包反代配置：与本机部署同形态，但 Key 与地址都是虚构的。 */
-const DEMO_DOUBAO_MODELS = ["doubao", "doubao-pro", "doubao-think", "doubao-expert"] as const;
+/** 演示用的 Trae 反代：真域名、虚构账号，截图时不会打到真服务。 */
+const DEMO_TRAE_MODELS: { id: string; name: string; context: number; sees: boolean }[] = [
+  { id: "DeepSeek-V4-Flash", name: "DeepSeek V4 Flash", context: 128000, sees: false },
+  { id: "DeepSeek-V4-Pro", name: "DeepSeek V4 Pro", context: 128000, sees: false },
+  { id: "glm-5", name: "GLM-5", context: 128000, sees: false },
+  { id: "glm-5.2", name: "GLM-5.2", context: 200000, sees: false },
+  { id: "kimi-k2.6", name: "Kimi K2.6", context: 256000, sees: true },
+  { id: "qwen-3.7-plus", name: "Qwen 3.7 Plus", context: 128000, sees: true },
+];
 
 function demoExternalConfig() {
   return {
     enabled: true,
-    baseUrl: "http://127.0.0.1:9090/v1",
-    hasKey: true,
-    keyTail: "7f3a",
-    models: [...DEMO_DOUBAO_MODELS],
-    userAgent: "wb-switch",
-    prefix: "doubao/",
-    provider: "doubao",
-    chatModelPreset: [...DEMO_DOUBAO_MODELS],
-    adminUrl: "http://127.0.0.1:9090/admin",
-    adminLink: "http://127.0.0.1:9090/admin?key=demo-key",
+    realm: "trae-cn",
+    realms: [
+      { id: "trae-cn", name: "Trae CN", web: "https://www.trae.cn", endpoint: "https://trae-api-cn.mchost.guru" },
+      { id: "trae-global", name: "Trae Global", web: "https://www.trae.ai", endpoint: "https://coresg-normal.trae.ai" },
+    ],
+    models: DEMO_TRAE_MODELS.map((m) => m.id),
+    prefix: "trae/",
+    provider: "trae",
+    signedIn: true,
+    accountName: "demo@trae.cn",
+    accountUid: "7000000000000000001",
+    accountRealm: "trae-cn",
+    expiresAt: Date.now() + 42 * 60 * 1000,
+    deviceId: "7301552840019283",
+    fallbackModels: DEMO_TRAE_MODELS,
+    signIn: { state: "idle", url: "", message: "", realm: "trae-cn" },
   };
 }
 
-/** 目录与上游 `/v1/models` 一致：4 个豆包对话、16 个千问通道、3 个生成类。 */
+/** 目录与真实 Trae CN 的 chat_v3 重合：都带 config_name 形态的 id。 */
 function demoExternalModels(): string[] {
-  return [
-    ...DEMO_DOUBAO_MODELS,
-    "qianwen", "qianwen-max", "qianwen-max-think", "qianwen-think", "qianwen-coder",
-    "qianwen-flash", "qianwen-search", "Qwen", "Qwen3.7-Max", "Qwen3.5-Plus",
-    "Qwen3.5-Flash", "Qwen3-Max", "Qwen3-Max-Thinking-Preview", "Qwen3-Coder",
-    "Qwen3-Coder-Flash", "Qwen3-235B-A22B-2507",
-    "doubao-image", "doubao-music", "doubao-video",
-  ];
+  return DEMO_TRAE_MODELS.map((m) => m.id);
 }
 
-function demoExternalHealth() {
+function demoExternalStatus() {
   return {
     ok: true,
-    reachable: true,
-    loggedIn: true,
-    needsCaptcha: false,
-    statusText: "ok",
-    url: "http://127.0.0.1:9090/health",
-    message: "服务正常（ok），已登录",
+    signedIn: true,
+    realm: "trae-cn",
+    name: "demo@trae.cn",
+    uid: "7000000000000000001",
+    deviceId: "7301552840019283",
+    expiresAt: Date.now() + 42 * 60 * 1000,
+    expiresInMin: 42,
+    models: DEMO_TRAE_MODELS.length,
+    message: `已登录，目录里有 ${DEMO_TRAE_MODELS.length} 个模型`,
   };
 }
 
@@ -1040,7 +1049,8 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
     case "get_credit_multipliers": return demoCreditMultipliers();
     case "proxy_external_config": return demoExternalConfig();
     case "proxy_external_models": return { ok: true, models: demoExternalModels() };
-    case "proxy_external_health": return demoExternalHealth();
+    case "proxy_external_status": return demoExternalStatus();
+    case "proxy_external_sign_in_state": return { state: "idle", url: "", message: "", realm: "trae-cn" };
     case "get_token_statistics": return demoTokenStatistics(typeof args?.days === "number" ? args.days : undefined);
     case "get_auto_checkin_config": return checkinConfig();
     case "get_checkin_logs": return { logs: checkinLogs() };

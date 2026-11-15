@@ -235,7 +235,10 @@ pub fn router() -> Router {
         .route("/api/proxy/external", get(api_proxy_external_config))
         .route("/api/proxy/external/save", post(api_proxy_save_external_config))
         .route("/api/proxy/external/models", post(api_proxy_external_models))
-        .route("/api/proxy/external/health", get(api_proxy_external_health))
+        .route("/api/proxy/external/status", get(api_proxy_external_status))
+        .route("/api/proxy/external/sign-in", post(api_proxy_external_sign_in))
+        .route("/api/proxy/external/sign-in/state", get(api_proxy_external_sign_in_state))
+        .route("/api/proxy/external/sign-out", post(api_proxy_external_sign_out))
         .route("/api/proxy/keys/create", post(api_proxy_create_key))
         .route("/api/proxy/keys/reveal", post(api_proxy_reveal_key))
         .route("/api/proxy/keys/enabled", post(api_proxy_set_key_enabled))
@@ -2018,6 +2021,22 @@ async fn api_proxy_external_models() -> Response {
     json_ok(proxy::external_models().await)
 }
 
-async fn api_proxy_external_health() -> Response {
-    json_ok(proxy::external_health().await)
+async fn api_proxy_external_status() -> Response {
+    json_ok(proxy::external_status().await)
+}
+
+async fn api_proxy_external_sign_in(Json(body): Json<Value>) -> Response {
+    let realm = body.get("realm").and_then(Value::as_str).unwrap_or("trae-cn");
+    match proxy::external_sign_in(realm).await {
+        Ok(value) => json_ok(value),
+        Err(err) => json_err(err, StatusCode::BAD_REQUEST),
+    }
+}
+
+async fn api_proxy_external_sign_in_state() -> Response {
+    json_ok(proxy::external_sign_in_state())
+}
+
+async fn api_proxy_external_sign_out() -> Response {
+    json_ok(proxy::external_sign_out())
 }

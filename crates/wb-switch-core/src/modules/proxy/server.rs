@@ -447,11 +447,12 @@ async fn try_account(
     Err((code, text, retryable))
 }
 
-/// 豆包反代的一次对话：请求体原样转发，响应体原样透传。
+/// Trae 反代的一次对话。
 ///
-/// 这里刻意不做协议转换——对端就是标准 OpenAI 接口。唯一要额外做的是
-/// 记账：把上游返回的 `usage` 读出来写台账，否则外部模型的消耗在页面上
-/// 完全看不见。
+/// 和豆包那条通道不同，这里**不能**原样透传：Trae 只有私有协议，引擎已经把
+/// 请求翻成 `llm_utils_chat`、把响应翻回 OpenAI 格式。网关这一侧只做两件事——
+/// 把结果交给客户端，以及把 usage 记进台账（否则外部模型的消耗在页面上完全
+/// 看不见）。
 async fn external_chat(
     model: &str,
     payload: &Value,
@@ -461,12 +462,12 @@ async fn external_chat(
     let started = Instant::now();
     let display_model = format!("{}{model}", external::PREFIX);
 
-    let resp = match external::forward(payload, model).await {
+    let reply = match external::forward(payload, model, client_stream).await {
         Ok(r) => r,
         Err((code, message)) => {
             store::record(&RequestRecord {
                 key_id: Some(key_id.to_string()),
-                account_label: Some("doubao".to_string()),
+                account_label: Some("trae".to_string()),
                 model: display_model,
                 stream: client_stream,
                 status: code,
@@ -481,66 +482,37 @@ async fn external_chat(
         }
     };
 
-    let status = resp.status();
-    if !status.is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        let summary = summarize_error(&text);
-        let code = status.as_u16();
-        store::record(&RequestRecord {
-            key_id: Some(key_id.to_string()),
-            account_label: Some("doubao".to_string()),
-            model: display_model,
-            stream: client_stream,
-            status: code,
-            total_ms: Some(started.elapsed().as_millis() as i64),
-            error: Some(summary.clone()),
-            ..Default::default()
-        });
-        return json_response(
-            StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY),
-            json!({ "error": { "message": summary, "type": "upstream_error", "code": code } }),
-        );
+    match reply {
+        external::Reply::Json(body) => {
+            let usage = Usage::from_value(body.get("usage"));
+            store::record(&RequestRecord {
+                key_id: Some(key_id.to_string()),
+                account_uid: None,
+                account_label: Some("trae".to_string()),
+                model: display_model,
+                stream: false,
+                status: 200,
+                prompt_tokens: usage.prompt,
+                completion_tokens: usage.completion,
+                cached_tokens: usage.cached,
+                total_tokens: usage.total,
+                credit: usage.credit,
+                ttft_ms: None,
+                total_ms: Some(started.elapsed().as_millis() as i64),
+                error: None,
+            });
+            json_response(StatusCode::OK, body)
+        }
+        external::Reply::Sse(rx) => stream_external(rx, key_id.to_string(), display_model, started).await,
     }
-
-    if client_stream {
-        return stream_external(resp, key_id.to_string(), display_model, started).await;
-    }
-
-    // 非流式：上游已经给了完整 JSON，原样交给客户端，只顺手记一笔用量。
-    let text = resp.text().await.unwrap_or_default();
-    let usage = serde_json::from_str::<Value>(&text)
-        .ok()
-        .map(|v| Usage::from_value(v.get("usage")))
-        .unwrap_or_default();
-    store::record(&RequestRecord {
-        key_id: Some(key_id.to_string()),
-        account_uid: None,
-        account_label: Some("doubao".to_string()),
-        model: display_model,
-        stream: false,
-        status: 200,
-        prompt_tokens: usage.prompt,
-        completion_tokens: usage.completion,
-        cached_tokens: usage.cached,
-        total_tokens: usage.total,
-        credit: usage.credit,
-        ttft_ms: None,
-        total_ms: Some(started.elapsed().as_millis() as i64),
-        error: None,
-    });
-    let mut response = Response::new(Body::from(text));
-    *response.status_mut() = StatusCode::OK;
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    apply_cors(response.headers_mut());
-    response
 }
 
-/// 外部上游的流式透传：字节原样转发，旁路解析 usage 记账。
+/// 外部上游的流式转发。
+///
+/// 引擎交过来的已经是 OpenAI 的 chunk，所以这里不需要再翻译——只旁路解析一遍
+/// usage 记账，字节原样转给客户端。
 fn stream_external(
-    resp: reqwest::Response,
+    mut upstream: mpsc::Receiver<Result<Bytes, Infallible>>,
     key_id: String,
     model: String,
     started: Instant,
@@ -548,13 +520,12 @@ fn stream_external(
     Box::pin(async move {
         let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(32);
         tokio::spawn(async move {
-            let mut upstream_stream = resp.bytes_stream();
             let mut buffer = String::new();
             let mut first_token_ms: Option<i64> = None;
             let mut usage = Usage::default();
             let mut failed: Option<String> = None;
 
-            while let Some(chunk) = upstream_stream.next().await {
+            while let Some(chunk) = upstream.recv().await {
                 match chunk {
                     Ok(bytes) => {
                         feed_sse(&bytes, &mut buffer, &mut usage, &mut first_token_ms, started);
@@ -572,7 +543,7 @@ fn stream_external(
             store::record(&RequestRecord {
                 key_id: Some(key_id),
                 account_uid: None,
-                account_label: Some("doubao".to_string()),
+                account_label: Some("trae".to_string()),
                 model,
                 stream: true,
                 status: if failed.is_some() { 499 } else { 200 },

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   CircleAlert,
@@ -6,11 +6,11 @@ import {
   ExternalLink,
   Info,
   Loader2,
+  LogIn,
+  LogOut,
   Plus,
   RefreshCw,
   Save,
-  Trash2,
-  WifiOff,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -24,132 +24,157 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import * as api from "@/lib/api";
-import type { ProxyExternalConfig, ProxyExternalHealth } from "@/lib/types";
+import type { ProxyExternalConfig, ProxyExternalStatus } from "@/lib/types";
 
 /**
- * 外部模型页：把内置网关接到本机 doubao2api（豆包反代）。
+ * 外部模型页：把内置网关接到 Trae（trae.cn / trae.ai）的模型上。
  *
- * 1.0.14 起整条通道换了实现。旧的 OpenCode 公网免费层在 1.0.12 判定不可用
- * （Bun TLS 指纹 / UA 版本闸 / 共享每日额度），界面只读存档；现在上游换成
- * 本机 127.0.0.1:9090 的 OpenAI 兼容服务，没有指纹问题，配置页恢复可用。
+ * 和豆包那条通道最大的区别是**没有独立服务要启动**。豆包靠本机 9090 的 Python
+ * 进程托着浏览器登录态，要扫码、要过风控；Trae 这边是我们自己按 IDE 的协议
+ * 去登录和请求，只有「登录」「令牌过期」两种失败。
  *
- * 只代理聊天：图片 / 视频 / 音乐生成端点不经过网关，生成类模型在这里被标出来
- * 且不可勾选（Rust 侧 save/forward 也会二次拦截）。千问系模型是上游另一条
- * 可选通道，默认部署没开 QIANWEN_ENABLED，因此只做提示、不硬禁。
+ * 登录走官方授权页：点登录会打开 trae.cn 的 authorization，登录完页面自己回调到
+ * 本机 127.0.0.1 的随机端口，后端接住就把账号存下来。**回调必须是 127.0.0.1**，
+ * Trae 只往那里回传令牌。
  */
 
-/** 与 Rust `external::is_generation_model` 保持同一判据。 */
-function isGenerationModel(id: string): boolean {
-  const lower = id.toLowerCase();
-  return lower.endsWith("-image") || lower.endsWith("-video") || lower.endsWith("-music");
-}
-
-/** 上游目录里的千问系模型，走另一套客户端，需要单独开 QIANWEN_ENABLED。 */
-function isQianwenModel(id: string): boolean {
-  return /^(qianwen|qwen)/i.test(id);
-}
-
-type ModelKind = "chat" | "aux" | "generation";
-
-function modelKind(id: string): ModelKind {
-  if (isGenerationModel(id)) return "generation";
-  if (isQianwenModel(id)) return "aux";
-  return "chat";
+/** 用户本地时区下的相对时间，用来说明令牌还剩多久。 */
+function humanLeft(minutes: number): string {
+  if (minutes <= 0) return "已过期";
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时 ${minutes % 60} 分`;
+  return `${Math.floor(hours / 24)} 天 ${hours % 24} 小时`;
 }
 
 export default function ExternalModelsPage() {
   const [cfg, setCfg] = useState<ProxyExternalConfig | null>(null);
-  const [health, setHealth] = useState<ProxyExternalHealth | null>(null);
+  const [status, setStatus] = useState<ProxyExternalStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fetching, setFetching] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const [signing, setSigning] = useState(false);
+  const [signInUrl, setSignInUrl] = useState("");
   const [remote, setRemote] = useState<string[] | null>(null);
   const [manual, setManual] = useState("");
-  const [chatOnly, setChatOnly] = useState(true);
 
   const [enabled, setEnabled] = useState(false);
-  const [baseUrl, setBaseUrl] = useState("");
-  const [userAgent, setUserAgent] = useState("");
+  const [realm, setRealm] = useState("trae-cn");
   const [models, setModels] = useState<string[]>([]);
-  const [apiKey, setApiKey] = useState("");
 
+  const pollRef = useRef<number | null>(null);
   const readOnly = api.isDemoMode();
 
+  const stopPolling = useCallback(() => {
+    if (pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const view = await api.proxyExternalConfig();
       setCfg(view);
       setEnabled(view.enabled);
-      setBaseUrl(view.baseUrl);
-      setUserAgent(view.userAgent);
+      setRealm(view.realm);
       setModels(view.models);
-      setApiKey("");
     } catch (error) {
       toast.error(`读取配置失败：${(error as Error).message}`);
-    } finally {
-      setLoading(false);
     }
   }, []);
 
-  const checkHealth = useCallback(async () => {
-    setChecking(true);
+  const checkStatus = useCallback(async () => {
     try {
-      setHealth(await api.proxyExternalHealth());
+      setStatus(await api.proxyExternalStatus());
     } catch (error) {
-      setHealth(null);
-      toast.error(`探测服务状态失败：${(error as Error).message}`);
-    } finally {
-      setChecking(false);
+      setStatus(null);
+      toast.error(`探测账号状态失败：${(error as Error).message}`);
     }
   }, []);
 
   useEffect(() => {
-    void load();
-    void checkHealth();
-  }, [load, checkHealth]);
+    void (async () => {
+      setLoading(true);
+      await Promise.all([load(), checkStatus()]);
+      setLoading(false);
+    })();
+    return stopPolling;
+  }, [load, checkStatus, stopPolling]);
 
-  const save = async (patch?: { enabled?: boolean }) => {
-    setSaving(true);
-    try {
-      // 生成类模型网关不代理，提交前先滤掉，免得后端报错让用户来回改。
-      const clean = models.filter((id) => !isGenerationModel(id));
-      if (clean.length !== models.length) {
-        toast.message("已自动去掉生成类模型：网关只代理对话请求");
-        setModels(clean);
+  /** 轮询登录进度：后端接住回调后 state 会变成 done / failed。 */
+  const startPolling = useCallback(() => {
+    stopPolling();
+    pollRef.current = window.setInterval(async () => {
+      try {
+        const st = await api.proxyExternalSignInState();
+        if (st.state === "done") {
+          stopPolling();
+          setSigning(false);
+          setSignInUrl("");
+          toast.success(st.message || "登录成功");
+          await Promise.all([load(), checkStatus()]);
+        } else if (st.state === "failed") {
+          stopPolling();
+          setSigning(false);
+          toast.error(st.message || "登录没有完成");
+          await checkStatus();
+        }
+      } catch {
+        // 单次轮询失败不影响，下一拍再试。
       }
-      const view = await api.proxySaveExternalConfig({
-        enabled: patch?.enabled ?? enabled,
-        baseUrl,
-        models: clean,
-        userAgent,
-        // 空字符串表示「不改」，后端会保留原 Key；要清空得发 "-"。
-        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-      });
-      setCfg(view);
-      setEnabled(view.enabled);
-      setBaseUrl(view.baseUrl);
-      setUserAgent(view.userAgent);
-      setModels(view.models);
-      setApiKey("");
-      toast.success("已保存");
-      void checkHealth();
+    }, 1200);
+  }, [checkStatus, load, stopPolling]);
+
+  const signIn = async () => {
+    setSigning(true);
+    try {
+      const res = await api.proxyExternalSignIn(realm);
+      setSignInUrl(res.url);
+      // 桌面窗里 window.open 可能被拦，所以下面同时给一个可点的链接。
+      window.open(res.url, "_blank", "noopener,noreferrer");
+      startPolling();
     } catch (error) {
-      toast.error(`保存失败：${(error as Error).message}`);
-    } finally {
-      setSaving(false);
+      setSigning(false);
+      toast.error(`发起登录失败：${(error as Error).message}`);
     }
   };
 
-  const clearKey = async () => {
+  const signOut = async () => {
+    stopPolling();
+    setSigning(false);
+    setSignInUrl("");
     try {
-      const view = await api.proxySaveExternalConfig({ apiKey: "-" });
+      const view = await api.proxyExternalSignOut();
       setCfg(view);
-      toast.success("已清除 Key");
-      void checkHealth();
+      setEnabled(view.enabled);
+      toast.success("已登出");
+      await checkStatus();
     } catch (error) {
-      toast.error(`清除失败：${(error as Error).message}`);
+      toast.error(`登出失败：${(error as Error).message}`);
+    }
+  };
+
+  const save = async (patch?: { enabled?: boolean; realm?: string }) => {
+    setSaving(true);
+    try {
+      const view = await api.proxySaveExternalConfig({
+        enabled: patch?.enabled ?? enabled,
+        realm: patch?.realm ?? realm,
+        models,
+      });
+      setCfg(view);
+      setEnabled(view.enabled);
+      setRealm(view.realm);
+      setModels(view.models);
+      toast.success("已保存");
+      void checkStatus();
+    } catch (error) {
+      toast.error(`保存失败：${(error as Error).message}`);
+      // 失败时把开关拨回去，别让界面显示一个没存下的状态。
+      setEnabled(cfg?.enabled ?? false);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -171,18 +196,17 @@ export default function ExternalModelsPage() {
     }
   };
 
-  /** 候选列表 = 远端 + 已启用（服务挂了也要能看到自己勾过的）。 */
-  const allCandidates = useMemo(
+  const meta = useMemo(() => {
+    const map = new Map<string, { name: string; context: number; sees: boolean }>();
+    for (const m of cfg?.fallbackModels ?? []) {
+      map.set(m.id, { name: m.name, context: m.context, sees: m.sees });
+    }
+    return map;
+  }, [cfg]);
+
+  const candidates = useMemo(
     () => Array.from(new Set([...(remote ?? []), ...models])).sort(),
     [remote, models],
-  );
-  const candidates = useMemo(
-    () => (chatOnly ? allCandidates.filter((id) => modelKind(id) === "chat") : allCandidates),
-    [allCandidates, chatOnly],
-  );
-  const chatCount = useMemo(
-    () => allCandidates.filter((id) => modelKind(id) === "chat").length,
-    [allCandidates],
   );
 
   const toggle = (id: string, on: boolean) => {
@@ -192,10 +216,6 @@ export default function ExternalModelsPage() {
   const addManual = () => {
     const id = manual.trim();
     if (!id) return;
-    if (isGenerationModel(id)) {
-      toast.error(`${id} 是生成类模型，网关只代理对话请求`);
-      return;
-    }
     toggle(id, true);
     setManual("");
   };
@@ -209,34 +229,38 @@ export default function ExternalModelsPage() {
     );
   }
 
-  const healthBadge = !health
-    ? { variant: "secondary" as const, text: "未探测" }
-    : health.ok
-      ? { variant: "default" as const, text: "可用" }
-      : health.reachable
-        ? { variant: "destructive" as const, text: "需处理" }
-        : { variant: "destructive" as const, text: "未启动" };
+  const signedIn = Boolean(cfg?.signedIn) || Boolean(status?.signedIn);
+  const accountLabel = status?.name || cfg?.accountName || "";
+  const leftMin = status?.expiresInMin ?? null;
+  const statusBadge = !status?.ok
+    ? signedIn
+      ? { variant: "secondary" as const, text: "已登录" }
+      : { variant: "destructive" as const, text: "未登录" }
+    : leftMin !== null && leftMin <= 0
+      ? { variant: "destructive" as const, text: "令牌过期" }
+      : { variant: "default" as const, text: "可用" };
 
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">外部模型</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          把内置网关接到本机 doubao2api（豆包反代）。模型会以{" "}
-          <code className="font-mono">{cfg?.prefix ?? "doubao/"}&lt;id&gt;</code> 的形式出现在{" "}
+          把内置网关接到 Trae 的模型上。模型会以{" "}
+          <code className="font-mono">{cfg?.prefix ?? "trae/"}&lt;id&gt;</code> 的形式出现在{" "}
           <code className="font-mono">/v1/models</code> 里，与 WorkBuddy 自己的模型并存。
         </p>
       </div>
 
       <Alert className="border-sky-500/30 bg-sky-500/5">
         <Info className="size-4" />
-        <AlertTitle>三步走：启动服务 → 扫码登录 → 在这里启用</AlertTitle>
+        <AlertTitle>两步走：登录 Trae → 勾选模型</AlertTitle>
         <AlertDescription className="text-xs leading-relaxed">
           <span>
-            上游是本机 <code className="font-mono">http://127.0.0.1:9090/v1</code> 的 Python 服务，
-            靠浏览器登录态调用豆包网页版。服务在跑不等于能用：首次使用、Cookie 过期或命中风控时，
-            都要到 Admin 面板用豆包 App 扫码 / 处理验证码。网关只转发{" "}
-            <code className="font-mono">/v1/chat/completions</code>，图片、视频、音乐生成端点请直连 9090。
+            没有独立服务要启动。点「登录」会打开{" "}
+            <code className="font-mono">{realm === "trae-global" ? "www.trae.ai" : "www.trae.cn"}</code>{" "}
+            的官方授权页，登录完页面自动回调到本机 <code className="font-mono">127.0.0.1</code>，
+            账号就存下来了。网关只转发 <code className="font-mono">/v1/chat/completions</code>，
+            请求会按 IDE 的私有协议翻译后再发给 Trae。
           </span>
         </AlertDescription>
       </Alert>
@@ -245,57 +269,79 @@ export default function ExternalModelsPage() {
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <CardTitle className="text-base">服务状态</CardTitle>
-              <Badge variant={healthBadge.variant}>{healthBadge.text}</Badge>
+              <CardTitle className="text-base">账号</CardTitle>
+              <Badge variant={statusBadge.variant}>{statusBadge.text}</Badge>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => void checkHealth()} disabled={checking}>
-                {checking ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                重新探测
+              <Button variant="outline" size="sm" onClick={() => void checkStatus()}>
+                <RefreshCw className="size-3.5" />
+                刷新状态
               </Button>
-              {cfg?.adminLink && (
-                <Button variant="outline" size="sm" asChild>
-                  <a href={cfg.adminLink} target="_blank" rel="noreferrer">
-                    <ExternalLink className="size-3.5" />
-                    Admin 面板
-                  </a>
+              {signedIn ? (
+                <Button variant="outline" size="sm" onClick={() => void signOut()} disabled={readOnly}>
+                  <LogOut className="size-3.5" />
+                  登出
+                </Button>
+              ) : (
+                <Button size="sm" onClick={() => void signIn()} disabled={signing || readOnly}>
+                  {signing ? <Loader2 className="size-3.5 animate-spin" /> : <LogIn className="size-3.5" />}
+                  {signing ? "等待浏览器登录…" : "登录"}
                 </Button>
               )}
             </div>
           </div>
-          <CardDescription>探测 {health?.url ?? `${baseUrl.replace(/\/v1$/, "")}/health`} 的在线与登录状态。</CardDescription>
+          <CardDescription>
+            用 Trae 自己的账号登录，免费额度同样可用。CN 账号不能登国际版，反之亦然。
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="flex items-start gap-2 text-sm">
-            {health?.ok ? (
+        <CardContent className="space-y-3">
+          {signedIn ? (
+            <div className="flex items-start gap-2 text-sm">
               <CircleCheck className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-            ) : health?.reachable ? (
-              <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
-            ) : (
-              <WifiOff className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            )}
-            <div className="min-w-0">
-              <p>{health?.message ?? "尚未取得服务状态，点「重新探测」重试。"}</p>
-              {health && (
+              <div className="min-w-0">
+                <p>{status?.message ?? `${accountLabel || "账号"} 已登录`}</p>
                 <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-                  <Badge variant="outline">在线 {health.reachable ? "是" : "否"}</Badge>
-                  <Badge variant="outline">
-                    已登录 {health.loggedIn === null ? "未知" : health.loggedIn ? "是" : "否"}
-                  </Badge>
-                  <Badge variant="outline">
-                    风控验证码 {health.needsCaptcha === null ? "未知" : health.needsCaptcha ? "需要" : "无"}
-                  </Badge>
-                  {health.statusText && <Badge variant="outline">{health.statusText}</Badge>}
+                  <Badge variant="outline">{status?.realm || cfg?.accountRealm || realm}</Badge>
+                  {accountLabel && <Badge variant="outline">{accountLabel}</Badge>}
+                  {leftMin !== null && <Badge variant="outline">令牌剩余 {humanLeft(leftMin)}</Badge>}
+                  {(status?.deviceId || cfg?.deviceId) && (
+                    <Badge variant="outline">设备 {status?.deviceId || cfg?.deviceId}</Badge>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
-          </div>
-          {cfg?.adminUrl && (
-            <p className="mt-3 text-[11px] text-muted-foreground">
-              Admin 面板：<code className="font-mono">{cfg.adminUrl}</code>
-              {cfg.hasKey && "（上面的按钮已自动带上 API Key；手动打开时需在地址后加 ?key=你的 Key）"}
-            </p>
+          ) : (
+            <div className="flex items-start gap-2 text-sm">
+              <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
+              <div className="min-w-0">
+                <p>{status?.message ?? "还没有登录。点右上角「登录」开始。"}</p>
+              </div>
+            </div>
           )}
+
+          {signing && (
+            <div className="flex items-start gap-2 rounded-md border bg-muted/30 p-3 text-xs">
+              <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+              <div className="min-w-0 space-y-1">
+                <p>已经打开授权页，登录完成后这里会自动变成「已登录」。</p>
+                {signInUrl && (
+                  <a className="inline-flex items-center gap-1 text-sky-600 underline" href={signInUrl} target="_blank" rel="noreferrer">
+                    <ExternalLink className="size-3" />
+                    浏览器没打开？点这里手动打开授权页
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-md border bg-muted/30 p-3 text-[11px] leading-relaxed text-muted-foreground">
+            <p className="font-medium text-foreground">为什么登录要开浏览器</p>
+            <p className="mt-1">
+              授权页只接受回调到 <code className="font-mono">http://127.0.0.1:&lt;端口&gt;/authorize</code>，
+              令牌就通过那个回调直接交给本机，不经过剪贴板。登录时会生成一份本机设备指纹
+              （设备 id + machine id + P-256 密钥）并持久化——Trae 按设备认人，每次换新设备会被拒。
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -307,7 +353,7 @@ export default function ExternalModelsPage() {
               <span className="text-xs text-muted-foreground">{enabled ? "已启用" : "未启用"}</span>
               <Switch
                 checked={enabled}
-                disabled={readOnly}
+                disabled={readOnly || saving}
                 onCheckedChange={(next) => {
                   setEnabled(next);
                   void save({ enabled: next });
@@ -315,67 +361,39 @@ export default function ExternalModelsPage() {
               />
             </div>
           </div>
-          <CardDescription>
-            关掉后带前缀的模型会从网关列表里消失，相关请求返回 404。
-          </CardDescription>
+          <CardDescription>关掉后带前缀的模型会从网关列表里消失，相关请求返回 404。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div>
-            <Label className="mb-1.5 block text-xs">Base URL</Label>
-            <Input
-              value={baseUrl}
-              placeholder="http://127.0.0.1:9090/v1"
-              onChange={(event) => setBaseUrl(event.target.value)}
-              disabled={readOnly}
-            />
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              指向 doubao2api 的 /v1 根路径，不要带 /chat/completions。默认只监听 127.0.0.1。
-            </p>
-          </div>
-
-          <div>
-            <Label className="mb-1.5 block text-xs">
-              API Key
-              {cfg?.hasKey && (
-                <span className="ml-2 text-muted-foreground">
-                  已保存（尾号 {cfg.keyTail || "****"}）
-                </span>
-              )}
-            </Label>
-            <div className="flex gap-2">
-              <Input
-                type="password"
-                value={apiKey}
-                placeholder={cfg?.hasKey ? "留空表示不修改" : "填 doubao2api 的 DOUBAO_API_KEY"}
-                onChange={(event) => setApiKey(event.target.value)}
-                disabled={readOnly}
-              />
-              {cfg?.hasKey && (
-                <Button variant="outline" size="sm" onClick={() => void clearKey()} disabled={readOnly}>
-                  <Trash2 className="size-3.5" />
-                  清除
+            <Label className="mb-1.5 block text-xs">Trae 部署</Label>
+            <div className="flex flex-wrap gap-2">
+              {(cfg?.realms ?? []).map((item) => (
+                <Button
+                  key={item.id}
+                  variant={realm === item.id ? "default" : "outline"}
+                  size="sm"
+                  disabled={readOnly || saving}
+                  onClick={() => {
+                    setRealm(item.id);
+                    void save({ realm: item.id });
+                  }}
+                >
+                  {item.name}
                 </Button>
-              )}
+              ))}
             </div>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              上游用 <code className="font-mono">DOUBAO_API_KEY</code> 保护 /v1/*；留空部署时这里也可以留空。
+              两个部署是各自独立的服务：域名、客户端、模型清单都不同，账号也不互通。
+              当前网关：<code className="font-mono">{cfg?.realms.find((r) => r.id === realm)?.endpoint ?? "-"}</code>
             </p>
           </div>
 
           <div>
-            <Label className="mb-1.5 block text-xs">User-Agent（可选）</Label>
-            <Input value={userAgent} onChange={(event) => setUserAgent(event.target.value)} disabled={readOnly} />
+            <Label className="mb-1.5 block text-xs">本机设备</Label>
+            <Input value={status?.deviceId || cfg?.deviceId || "登录后生成"} readOnly disabled />
             <p className="mt-1 text-[11px] text-muted-foreground">
-              doubao2api 不校验 UA，这里只是沿用 OpenAI 客户端的通用配置项。
+              首次登录时生成，之后每次请求都带同一套。清掉它等于换一台机器，Trae 会重新认。
             </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => void save()} disabled={saving || readOnly}>
-              {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-              保存
-            </Button>
-            {readOnly && <span className="text-xs text-muted-foreground">演示模式下不可保存。</span>}
           </div>
         </CardContent>
       </Card>
@@ -388,39 +406,28 @@ export default function ExternalModelsPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setModels((prev) => Array.from(new Set([...prev, ...(cfg?.chatModelPreset ?? [])])))}
-                disabled={readOnly || !cfg?.chatModelPreset.length}
+                onClick={() => setModels((prev) => Array.from(new Set([...prev, ...(cfg?.fallbackModels ?? []).map((m) => m.id)])))}
+                disabled={readOnly || !cfg?.fallbackModels.length}
               >
                 <Plus className="size-3.5" />
-                一键填入对话模型
+                填入兜底清单
               </Button>
-              <Button variant="outline" size="sm" onClick={() => void pullModels()} disabled={fetching}>
+              <Button variant="outline" size="sm" onClick={() => void pullModels()} disabled={fetching || !signedIn}>
                 {fetching ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                从上游拉取
+                从 Trae 拉取
               </Button>
             </div>
           </div>
           <CardDescription>
-            勾选的模型才会出现在网关 <code className="font-mono">/v1/models</code> 里。生成类模型不代理。
+            勾选的模型才会出现在网关 <code className="font-mono">/v1/models</code> 里。
+            「从 Trae 拉取」读的是你账号自己的清单——免费版和付费版看到的不一样。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-              <Checkbox checked={chatOnly} onCheckedChange={(v) => setChatOnly(Boolean(v))} />
-              只看可代理的对话模型（{chatCount} 个）
-            </label>
-            {chatOnly && allCandidates.length > chatCount && (
-              <span className="text-[11px] text-muted-foreground">
-                另有 {allCandidates.length - chatCount} 个生成 / 千问模型已隐藏
-              </span>
-            )}
-          </div>
-
           <div className="flex gap-2">
             <Input
               value={manual}
-              placeholder="手动添加模型 id，例如 doubao-pro"
+              placeholder="手动添加模型 id，例如 deepseek-v4.1-flash"
               disabled={readOnly}
               onChange={(event) => setManual(event.target.value)}
               onKeyDown={(event) => {
@@ -435,29 +442,30 @@ export default function ExternalModelsPage() {
 
           {candidates.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              还没有模型。点「一键填入对话模型」或「从上游拉取」。
+              {signedIn ? "还没有模型。点「填入兜底清单」或「从 Trae 拉取」。" : "先登录，才能读到你账号的模型清单。"}
             </p>
           ) : (
-            <div className="max-h-64 space-y-0.5 overflow-auto rounded-md border p-2">
+            <div className="max-h-72 space-y-0.5 overflow-auto rounded-md border p-2">
               {candidates.map((id) => {
-                const kind = modelKind(id);
-                const blocked = kind === "generation";
+                const info = meta.get(id);
                 return (
                   <label
                     key={id}
-                    className={`flex items-center gap-2 rounded px-1.5 py-1 text-xs ${
-                      blocked ? "cursor-not-allowed opacity-55" : "cursor-pointer hover:bg-muted/50"
-                    }`}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-muted/50"
                   >
                     <Checkbox
                       checked={models.includes(id)}
                       onCheckedChange={(next) => toggle(id, Boolean(next))}
-                      disabled={readOnly || blocked}
+                      disabled={readOnly}
                     />
                     <span className="truncate font-mono">{id}</span>
-                    {kind === "generation" && <Badge variant="destructive">生成类 · 不代理</Badge>}
-                    {kind === "aux" && <Badge variant="outline">千问通道 · 需上游开启</Badge>}
-                    {kind === "chat" && <Badge variant="secondary">对话</Badge>}
+                    {info && <Badge variant="secondary">{info.name}</Badge>}
+                    {info?.sees && <Badge variant="outline">收图</Badge>}
+                    {info && (
+                      <span className="text-[11px] text-muted-foreground">
+                        {Math.round(info.context / 1000)}k
+                      </span>
+                    )}
                   </label>
                 );
               })}
@@ -470,6 +478,7 @@ export default function ExternalModelsPage() {
               保存模型
             </Button>
             <span className="text-xs text-muted-foreground">已选 {models.length} 个</span>
+            {readOnly && <span className="text-xs text-muted-foreground">演示模式下不可保存。</span>}
           </div>
         </CardContent>
       </Card>
@@ -478,7 +487,7 @@ export default function ExternalModelsPage() {
         <CardHeader>
           <CardTitle className="text-base">调用示例</CardTitle>
           <CardDescription>
-            用网关自己的 Key 调 8788，模型名带 <code className="font-mono">doubao/</code> 前缀。
+            用网关自己的 Key 调 8788，模型名带 <code className="font-mono">trae/</code> 前缀。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -486,11 +495,11 @@ export default function ExternalModelsPage() {
 {`curl http://127.0.0.1:8788/v1/chat/completions \\
   -H "Authorization: Bearer sk-wb-..." \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"doubao/${models[0] ?? "doubao"}","messages":[{"role":"user","content":"hi"}]}'`}
+  -d '{"model":"trae/${models[0] ?? "glm-5.2"}","messages":[{"role":"user","content":"hi"}]}'`}
           </pre>
           <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <Activity className="size-3" />
-            调用会记入网关请求台账，账号标签为 doubao；用量由上游返回的 usage 决定。
+            调用会记入网关请求台账，账号标签为 trae；用量来自 Trae 自己的 token 计数。
           </p>
         </CardContent>
       </Card>

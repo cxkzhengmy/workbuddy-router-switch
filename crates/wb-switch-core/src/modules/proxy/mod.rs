@@ -17,6 +17,7 @@ pub mod external;
 pub mod network;
 pub mod server;
 pub mod store;
+pub mod trae;
 pub mod upstream;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -294,7 +295,7 @@ pub fn save_account_config(input: &Value) -> Result<Value, String> {
 }
 
 // ---------------------------------------------------------------------------
-// 外部上游（本机 doubao2api 豆包反代）
+// 外部上游（Trae 反代）
 // ---------------------------------------------------------------------------
 
 pub fn external_config() -> Value {
@@ -313,10 +314,24 @@ pub async fn external_models() -> Value {
     }
 }
 
-/// 探测 doubao2api 在线状态与扫码登录状态。
-/// 服务在跑不等于能用，所以界面要主动展示这一项。
-pub async fn external_health() -> Value {
-    external::health().await
+/// 账号状态：登录没登录、令牌还多久。
+pub async fn external_status() -> Value {
+    external::status().await
+}
+
+/// 开始浏览器登录，返回授权页地址。
+pub async fn external_sign_in(realm: &str) -> Result<Value, String> {
+    external::sign_in_start(realm).await
+}
+
+/// 登录进度（界面轮询）。
+pub fn external_sign_in_state() -> Value {
+    external::sign_in_state()
+}
+
+/// 登出并清掉设备。
+pub fn external_sign_out() -> Value {
+    external::sign_out()
 }
 
 // ---------------------------------------------------------------------------

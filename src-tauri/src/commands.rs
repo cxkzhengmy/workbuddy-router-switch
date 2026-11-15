@@ -1604,7 +1604,7 @@ pub async fn proxy_save_account_config(config: Value) -> Result<Value, String> {
     proxy::save_account_config(&config)
 }
 
-/// 外部上游（本机 doubao2api 豆包反代）配置。
+/// 外部上游（Trae 反代）配置。
 #[tauri::command]
 pub async fn proxy_external_config() -> Result<Value, String> {
     Ok(proxy::external_config())
@@ -1620,10 +1620,28 @@ pub async fn proxy_external_models() -> Result<Value, String> {
     Ok(proxy::external_models().await)
 }
 
-/// 服务在线 / 扫码登录 / 风控验证码状态。
+/// 账号状态：登录没登录、令牌还多久。
 #[tauri::command]
-pub async fn proxy_external_health() -> Result<Value, String> {
-    Ok(proxy::external_health().await)
+pub async fn proxy_external_status() -> Result<Value, String> {
+    Ok(proxy::external_status().await)
+}
+
+/// 开始 Trae 浏览器登录，返回授权页地址（由前端打开）。
+#[tauri::command]
+pub async fn proxy_external_sign_in(realm: String) -> Result<Value, String> {
+    proxy::external_sign_in(&realm).await
+}
+
+/// 登录进度，前端按 1 秒轮询。
+#[tauri::command]
+pub async fn proxy_external_sign_in_state() -> Result<Value, String> {
+    Ok(proxy::external_sign_in_state())
+}
+
+/// 登出并清掉本机设备。
+#[tauri::command]
+pub async fn proxy_external_sign_out() -> Result<Value, String> {
+    Ok(proxy::external_sign_out())
 }
 
 // ---------------------------------------------------------------------------

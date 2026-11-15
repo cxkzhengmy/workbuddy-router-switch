@@ -63,7 +63,8 @@ import type {
   ProxyAccountConfig,
   ProxyAccountPolicy,
   ProxyExternalConfig,
-  ProxyExternalHealth,
+  ProxyExternalSignIn,
+  ProxyExternalStatus,
 } from "./types";
 import { DEMO_UNAVAILABLE_MESSAGE, demoModeEnabled } from "./demo-mode";
 import { screenshotDemoResponse } from "./screenshot-demo";
@@ -79,7 +80,7 @@ const DEMO_READ_COMMANDS = new Set([
   "get_status", "get_accounts", "get_codebuddy_cli_status", "get_codebuddy_cn_ide_status", "get_codebuddy_ide_status", "get_vscode_ext_status", "get_jetbrains_status", "list_vscode_sessions", "list_codebuddy_ide_sessions", "list_codebuddy_intl_ide_sessions", "vscode_session_links_preview", "codebuddy_ide_session_links_preview", "codebuddy_intl_ide_session_links_preview", "list_account_sessions", "session_links_preview_cross", "list_session_groups", "get_session_group", "preview_session_group_pair", "get_checkin_status",
   "get_credit_expiry", "get_credit_statistics", "get_credit_billing",
   "get_credit_multipliers", "get_auto_checkin_config",
-  "proxy_external_config", "proxy_external_models", "proxy_external_health",
+  "proxy_external_config", "proxy_external_models", "proxy_external_status", "proxy_external_sign_in_state",
   "get_token_statistics",
   "get_checkin_logs", "get_auto_rotate_config", "rotate_status", "get_rotate_logs",
   "get_github_config", "check_update", "get_launch_at_login_enabled", "switch_progress",
@@ -140,7 +141,10 @@ const ROUTES: Record<string, Route> = {
   proxy_external_config: { method: "GET", path: "/api/proxy/external" },
   proxy_save_external_config: { method: "POST", path: "/api/proxy/external/save" },
   proxy_external_models: { method: "POST", path: "/api/proxy/external/models" },
-  proxy_external_health: { method: "GET", path: "/api/proxy/external/health" },
+  proxy_external_status: { method: "GET", path: "/api/proxy/external/status" },
+  proxy_external_sign_in: { method: "POST", path: "/api/proxy/external/sign-in" },
+  proxy_external_sign_in_state: { method: "GET", path: "/api/proxy/external/sign-in/state" },
+  proxy_external_sign_out: { method: "POST", path: "/api/proxy/external/sign-out" },
   // 网关（workbuddy2api-hub sidecar）
   get_codebuddy_cli_status: { method: "GET", path: "/api/codebuddy-cli/status" },
   install_codebuddy_cli_helper: { method: "POST", path: "/api/codebuddy-cli/install-helper" },
@@ -1289,9 +1293,7 @@ export function proxyExternalConfig(): Promise<ProxyExternalConfig> {
   return call("proxy_external_config");
 }
 
-export function proxySaveExternalConfig(
-  config: Partial<ProxyExternalConfig> & { apiKey?: string },
-): Promise<ProxyExternalConfig> {
+export function proxySaveExternalConfig(config: Partial<ProxyExternalConfig>): Promise<ProxyExternalConfig> {
   return call("proxy_save_external_config", { config });
 }
 
@@ -1304,7 +1306,22 @@ export function proxyExternalModels(): Promise<{
   return call("proxy_external_models");
 }
 
-/** 探测本机 doubao2api 是否在线、是否已扫码登录、是否卡在验证码。 */
-export function proxyExternalHealth(): Promise<ProxyExternalHealth> {
-  return call("proxy_external_health");
+/** 账号状态：登录没登录、令牌还多久、目录拉到几个。 */
+export function proxyExternalStatus(): Promise<ProxyExternalStatus> {
+  return call("proxy_external_status");
+}
+
+/** 开始浏览器登录，返回要打开的官方授权页地址。 */
+export function proxyExternalSignIn(realm: string): Promise<{ url: string; realm: string; reused: boolean }> {
+  return call("proxy_external_sign_in", { realm });
+}
+
+/** 轮询登录进度。 */
+export function proxyExternalSignInState(): Promise<ProxyExternalSignIn> {
+  return call("proxy_external_sign_in_state");
+}
+
+/** 登出，清掉账号与本机设备。 */
+export function proxyExternalSignOut(): Promise<ProxyExternalConfig> {
+  return call("proxy_external_sign_out");
 }
