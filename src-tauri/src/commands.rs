@@ -1626,6 +1626,12 @@ pub async fn proxy_external_status() -> Result<Value, String> {
     Ok(proxy::external_status().await)
 }
 
+/// 账号自己的额度（积分）用量。与 WorkBuddy 的积分计费是两套。
+#[tauri::command]
+pub async fn proxy_external_entitlement() -> Result<Value, String> {
+    proxy::external_entitlement().await
+}
+
 /// 开始 Trae 浏览器登录，返回授权页地址（由前端打开）。
 #[tauri::command]
 pub async fn proxy_external_sign_in(realm: String) -> Result<Value, String> {

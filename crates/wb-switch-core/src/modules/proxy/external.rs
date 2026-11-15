@@ -113,6 +113,21 @@ pub async fn status() -> Value {
     })
 }
 
+/// 账号的额度（积分）用量。
+///
+/// 这是 **Trae 账号自己的额度**，与 WorkBuddy 的积分是两套：走 Trae 通道花的是
+/// 这个额度，不扣 WorkBuddy 的 credit，所以「积分计费」页里看不到这部分消耗。
+/// 界面上要把它和 WorkBuddy 的积分分开说，别混成一个数。
+pub async fn entitlement() -> Result<Value, String> {
+    if trae::account().is_none() {
+        return Ok(serde_json::json!({
+            "ok": false,
+            "message": "还没有登录 Trae，登录后这里会显示账号的剩余额度。",
+        }));
+    }
+    trae::entitlement().await
+}
+
 /// 转发一次对话。`model` 已经去掉前缀。
 ///
 /// 返回的 [`Reply`] 已经是 OpenAI 的格式：流式是一串 `chat.completion.chunk`，

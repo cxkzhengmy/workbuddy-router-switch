@@ -1122,6 +1122,166 @@ pub async fn fetch_models() -> Result<Vec<TraeModel>, String> {
     Err(error.unwrap_or_else(|| "目录为空".to_string()))
 }
 
+/// 额度（积分）用量，来自 Trae 账单页那个接口。
+///
+/// 接口在 `auth` 域名下而不是聊天网关：`POST {auth}/trae/api/v2/pay/ide_user_ent_usage`，
+/// body 必须带 `require_usage: true`——少了它只回额度上限、不回已用量。
+///
+/// 这里的「积分」是 **Trae 账号自己的额度**，跟 WorkBuddy 的 credit 是两套东西。
+/// 走 Trae 通道花的是这个额度，不扣 WorkBuddy 积分，所以「积分计费」页里看不到
+/// 这部分消耗；反过来这里的数字也不含 WorkBuddy 官方通道的用量。
+pub async fn entitlement() -> Result<Value, String> {
+    let acc = fresh().await?;
+    // 缓存按 uid 区分：同一台机器可能先后登过不同账号，额度不能串。
+    {
+        let cache = entitlement_cache().lock().await;
+        if let Some(c) = cache.as_ref() {
+            if c.uid == acc.uid && now_ms() - c.at < ENTITLEMENT_TTL_MS {
+                return Ok(c.value.clone());
+            }
+        }
+    }
+    let r = realm(&acc.realm).ok_or_else(|| "账号记录的 realm 不认识".to_string())?;
+    let url = format!("{}/trae/api/v2/pay/ide_user_ent_usage", r.auth);
+    let client = client_for(r);
+    let headers = ide_headers(&acc, r);
+    let body = json!({ "require_usage": true, "req_source": 0 });
+    let raw = post_json(&client, &headers, &url, &body).await?;
+    let value = summarize_entitlement(&raw);
+    let mut cache = entitlement_cache().lock().await;
+    *cache = Some(CachedEntitlement { at: now_ms(), uid: acc.uid.clone(), value: value.clone() });
+    Ok(value)
+}
+
+/// 把账单接口的返回压成界面要的几个数。
+///
+/// 口径照 Trae 自己的账单页：把有限额的包累加成总量，`credits_limit == -1`
+/// 记为无限；已用取各包的 `usage.credits_amount`（没用过的包这里是空对象）。
+/// 顶层 `usage_summary` 更直接，但不是每个账号都有，所以只当校对用于兜底。
+///
+/// `end_time` 是**秒**级时间戳，输出统一成毫秒，与 `expiresAt` 等字段一致。
+fn summarize_entitlement(v: &Value) -> Value {
+    let now = chrono::Utc::now().timestamp();
+    let packs = v.get("user_entitlement_pack_list").and_then(Value::as_array);
+
+    let mut total = 0.0_f64;
+    let mut used = 0.0_f64;
+    let mut unlimited = false;
+    // 最早到期：只算「还有剩余、且还没过期」的包——已经用完或已过期的包
+    // 到期与否都不改变账号上的额度，不该拿来当续期日。
+    let mut soonest: i64 = 0;
+    let mut lapsing = 0.0_f64;
+    let mut items: Vec<Value> = Vec::new();
+
+    for p in packs.into_iter().flatten() {
+        let bi = p.get("entitlement_base_info").unwrap_or(&Value::Null);
+        let quota = bi.get("quota").unwrap_or(&Value::Null);
+        let limit = f64_of(quota, "credits_limit");
+        let spent = p
+            .get("usage")
+            .and_then(|u| f64_of(u, "credits_amount"))
+            .unwrap_or(0.0);
+        let end = i64_of(bi, "end_time")
+            .or_else(|| i64_of(bi, "expire_time"))
+            .or_else(|| i64_of(p, "end_time"))
+            .unwrap_or(0);
+
+        // Trae 用 -1 表示无限额度，不能当负数累加掉。
+        if let Some(l) = limit {
+            if l < 0.0 {
+                unlimited = true;
+            } else {
+                total += l;
+            }
+        }
+        if spent > 0.0 {
+            used += spent;
+        }
+        // 还有剩余、且未过期，才参与「最早到期」的判定。
+        let still_useful = match limit {
+            Some(l) if l < 0.0 => true,
+            Some(l) => l > 0.0 && spent < l,
+            None => false,
+        };
+        if still_useful && end > now {
+            let rest = match limit {
+                Some(l) if l < 0.0 => 0.0,
+                Some(l) => (l - spent.max(0.0)).max(0.0),
+                None => 0.0,
+            };
+            if soonest == 0 || end < soonest {
+                soonest = end;
+                lapsing = rest;
+            } else if end == soonest {
+                lapsing += rest;
+            }
+        }
+
+        items.push(json!({
+            "label": str_of(p, "display_desc"),
+            "group": str_of(p, "group_name"),
+            "limit": limit.filter(|l| *l >= 0.0),
+            "used": spent,
+            "expiresAt": if end > 0 { json!(end * 1000) } else { Value::Null },
+        }));
+    }
+
+    // 顶层字段当校对：它给的总额与包累加不一致时（比如账号有我们没列出的包）
+    // 以顶层为准，因为它就是账单页上显示的那个数。
+    let summary = v.get("usage_summary").unwrap_or(&Value::Null);
+    if let (Some(t), Some(c)) = (f64_of(summary, "total_amount"), f64_of(summary, "consumed_amount")) {
+        if t > 0.0 {
+            total = t;
+            used = c;
+        }
+    }
+    let left = v
+        .get("total_balance")
+        .and_then(Value::as_f64)
+        .unwrap_or_else(|| (total - used).max(0.0));
+    let ratio = if total > 0.0 { (used / total).clamp(0.0, 1.0) } else { 0.0 };
+
+    json!({
+        "ok": true,
+        "total": total,
+        "used": used,
+        "left": left,
+        "ratio": ratio,
+        "unlimited": unlimited,
+        "expiresAt": if soonest > 0 { json!(soonest * 1000) } else { Value::Null },
+        "lapsing": lapsing,
+        "packs": items,
+        "fetchedAt": now * 1000,
+    })
+}
+
+struct CachedEntitlement {
+    at: i64,
+    uid: String,
+    value: Value,
+}
+
+fn entitlement_cache() -> &'static TokioMutex<Option<CachedEntitlement>> {
+    static CACHE: OnceLock<TokioMutex<Option<CachedEntitlement>>> = OnceLock::new();
+    CACHE.get_or_init(|| TokioMutex::new(None))
+}
+
+/// 额度缓存时长。账单页的数字不会一秒一变，页面反复刷新时没必要每次都打接口。
+const ENTITLEMENT_TTL_MS: i64 = 60 * 1000;
+
+fn f64_of(v: &Value, key: &str) -> Option<f64> {
+    let raw = v.get(key)?;
+    raw.as_f64()
+        .or_else(|| raw.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+}
+
+fn i64_of(v: &Value, key: &str) -> Option<i64> {
+    let raw = v.get(key)?;
+    raw.as_i64()
+        .or_else(|| raw.as_f64().map(|f| f as i64))
+        .or_else(|| raw.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+}
+
 /// 只读缓存，不发起任何网络请求。
 ///
 /// 聊天路径必须用这个而不是 [`catalog`]：目录接口在 Trae 慢的时候要吃掉
@@ -2849,6 +3009,136 @@ mod tests {
         assert_eq!(event_name("output"), "output");
         assert_eq!(event_name(""), "");
         assert_eq!(event_name("soloAgentDelta"), "solo_agent_delta");
+    }
+
+    /// 一个包。`limit` 为 None 时不带 `credits_limit`（免费包就是这样）。
+    fn pack(label: &str, group: &str, limit: Option<i64>, used: Option<i64>, end: i64) -> Value {
+        let mut quota = serde_json::Map::new();
+        if let Some(l) = limit {
+            quota.insert("credits_limit".into(), json!(l));
+        }
+        let mut usage = serde_json::Map::new();
+        if let Some(u) = used {
+            // 用过的包才有 credits_amount；没用过时这个对象是空的。
+            usage.insert("credits_amount".into(), json!(u));
+        }
+        json!({
+            "display_desc": label,
+            "group_name": group,
+            "entitlement_base_info": {
+                "quota": Value::Object(quota),
+                "start_time": end - 2_592_000,
+                "end_time": end,
+            },
+            "usage": Value::Object(usage),
+        })
+    }
+
+    /// 一组未来时间戳（秒）。用远未来避免测试随真实日期腐坏。
+    ///
+    /// 注意：断言时不要把 `future(n)` 再算一遍去比，跨秒会抖；从输出的
+    /// `packs[].expiresAt` 里取回期望值。
+    fn future(days: i64) -> i64 {
+        chrono::Utc::now().timestamp() + days * 86_400
+    }
+
+    /// 从输出里取第 i 个包的到期时间（毫秒），作为「最早到期」的期望值。
+    fn pack_expiry(v: &Value, i: usize) -> Option<i64> {
+        v["packs"][i]["expiresAt"].as_i64()
+    }
+
+    #[test]
+    fn entitlement_adds_up_finite_packs() {
+        // 形状照真实返回：一个月登录赠送 500 + 三个签到 100，外加一个没有
+        // credits_limit 的免费包（它只带功能开关，不参与额度累加）。
+        let raw = json!({
+            "total_balance": 800,
+            "usage_summary": { "consumed_amount": 0, "consumption_ratio": 0, "total_amount": 800 },
+            "user_entitlement_pack_list": [
+                pack("免费", "", None, None, future(15)),
+                pack("每月登录赠送", "每月登录积分", Some(500), None, future(15)),
+                pack("签到奖励", "每日签到", Some(100), None, future(9)),
+                pack("签到奖励", "每日签到", Some(100), None, future(11)),
+                pack("签到奖励", "每日签到", Some(100), None, future(31)),
+            ],
+        });
+        let v = summarize_entitlement(&raw);
+        assert_eq!(v["ok"], json!(true));
+        assert_eq!(v["total"], json!(800.0));
+        assert_eq!(v["used"], json!(0.0));
+        assert_eq!(v["left"], json!(800.0));
+        assert_eq!(v["unlimited"], json!(false));
+        // 免费包没有上限，不该占一个到期位；最早到期是第 2 个包（未来 9 天）。
+        assert_eq!(v["expiresAt"].as_i64(), pack_expiry(&v, 2));
+        assert_eq!(v["lapsing"], json!(100.0));
+        assert_eq!(v["packs"].as_array().map(|a| a.len()), Some(5));
+        // 没有上限的包输出 null，前端据此说「不计额度」。
+        assert!(v["packs"][0]["limit"].is_null());
+    }
+
+    #[test]
+    fn entitlement_treats_minus_one_as_unlimited() {
+        let raw = json!({
+            "user_entitlement_pack_list": [
+                pack("企业版", "订阅", Some(-1), Some(4000), future(30)),
+                pack("签到奖励", "每日签到", Some(100), None, future(5)),
+            ],
+        });
+        let v = summarize_entitlement(&raw);
+        assert_eq!(v["unlimited"], json!(true));
+        // -1 不能当负数累加掉，有限额的那 100 仍要算上。
+        assert_eq!(v["total"], json!(100.0));
+        assert_eq!(v["used"], json!(4000.0));
+        // 无限包不计 rest，最早到期落在签到包上（第 1 个）。
+        assert_eq!(v["expiresAt"].as_i64(), pack_expiry(&v, 1));
+        assert_eq!(v["lapsing"], json!(100.0));
+        assert!(v["packs"][0]["limit"].is_null());
+    }
+
+    #[test]
+    fn entitlement_ignores_spent_or_expired_packs_for_renewal() {
+        let raw = json!({
+            "user_entitlement_pack_list": [
+                // 已经用完：到期与否都不改变额度，不该当续期日。
+                pack("签到奖励", "每日签到", Some(100), Some(100), future(2)),
+                // 已经过期。
+                pack("签到奖励", "每日签到", Some(100), None, chrono::Utc::now().timestamp() - 86_400),
+                // 这个才是真正还有剩余、且尚未到期的最近一个。
+                pack("每月登录赠送", "每月登录积分", Some(500), Some(80), future(20)),
+            ],
+        });
+        let v = summarize_entitlement(&raw);
+        assert_eq!(v["total"], json!(700.0));
+        assert_eq!(v["used"], json!(180.0));
+        assert_eq!(v["expiresAt"].as_i64(), pack_expiry(&v, 2));
+        assert_eq!(v["lapsing"], json!(420.0));
+    }
+
+    #[test]
+    fn entitlement_prefers_summary_over_pack_sum() {
+        // 顶层 usage_summary 是账单页上显示的那个数，与包累加不一致时以它为准。
+        let raw = json!({
+            "total_balance": 615.5,
+            "usage_summary": { "consumed_amount": 184.5, "consumption_ratio": 23, "total_amount": 800 },
+            "user_entitlement_pack_list": [ pack("签到奖励", "每日签到", Some(100), Some(50), future(10)) ],
+        });
+        let v = summarize_entitlement(&raw);
+        assert_eq!(v["total"], json!(800.0));
+        assert_eq!(v["used"], json!(184.5));
+        // left 用顶层余额，而不是 total - used 重算。
+        assert_eq!(v["left"], json!(615.5));
+        assert_eq!(v["ratio"], json!(184.5 / 800.0));
+    }
+
+    #[test]
+    fn entitlement_survives_empty_answer() {
+        // 没登录/接口改版时不能 panic，界面靠 ok 字段决定显示什么。
+        let v = summarize_entitlement(&json!({}));
+        assert_eq!(v["ok"], json!(true));
+        assert_eq!(v["total"], json!(0.0));
+        assert_eq!(v["used"], json!(0.0));
+        assert_eq!(v["packs"].as_array().map(|a| a.len()), Some(0));
+        assert!(v["expiresAt"].is_null());
     }
 
     #[test]

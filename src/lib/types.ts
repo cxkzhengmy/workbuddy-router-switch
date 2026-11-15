@@ -1318,3 +1318,45 @@ export interface ProxyExternalStatus {
   models: number | null;
   message: string;
 }
+
+/** Trae 账号自己的一个额度包（账单页上的一行）。 */
+export interface ProxyExternalPack {
+  /** 「每月登录赠送」「签到奖励」这类来源。 */
+  label: string;
+  /** 分组名，签到包是「每日签到」。没有分组时为空串。 */
+  group: string;
+  /** 这个包的额度上限。为 null 表示包不带额度（免费包只有功能开关）。 */
+  limit: number | null;
+  /** 这个包已经用掉多少。 */
+  used: number;
+  /** 到期时间（毫秒时间戳）。为 null 表示没有到期时间。 */
+  expiresAt: number | null;
+}
+
+/**
+ * Trae 账号的额度（积分）用量。
+ *
+ * 注意这与 WorkBuddy 的积分计费是**两套**：走 Trae 通道花的是这里的额度，
+ * 不扣 WorkBuddy 的 credit，所以「积分计费」页看不到这部分消耗。
+ */
+export interface ProxyExternalEntitlement {
+  ok: boolean;
+  /** 总上限。无限额度时它是有限包的合计。 */
+  total: number;
+  used: number;
+  /** 剩余。以账单页的 total_balance 为准，不是 total - used 重算。 */
+  left: number;
+  /** 已用占比 0..1。 */
+  ratio: number;
+  /** 账号有不限额的包（Trae 用 credits_limit = -1 表示）。 */
+  unlimited: boolean;
+  /** 最早一个「还有剩余且未过期」的包的到期时间（毫秒）。 */
+  expiresAt: number | null;
+  /** 到 expiresAt 时会有多少剩余额度失效。 */
+  lapsing: number;
+  packs: ProxyExternalPack[];
+  /** 这份数据是何时拉到的（毫秒）。后端有 60 秒缓存。 */
+  fetchedAt: number;
+  /** ok 为 false 时的说明（比如还没登录）。 */
+  message?: string;
+}

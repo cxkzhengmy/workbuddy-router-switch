@@ -236,6 +236,7 @@ pub fn router() -> Router {
         .route("/api/proxy/external/save", post(api_proxy_save_external_config))
         .route("/api/proxy/external/models", post(api_proxy_external_models))
         .route("/api/proxy/external/status", get(api_proxy_external_status))
+        .route("/api/proxy/external/entitlement", get(api_proxy_external_entitlement))
         .route("/api/proxy/external/sign-in", post(api_proxy_external_sign_in))
         .route("/api/proxy/external/sign-in/state", get(api_proxy_external_sign_in_state))
         .route("/api/proxy/external/sign-out", post(api_proxy_external_sign_out))
@@ -2023,6 +2024,14 @@ async fn api_proxy_external_models() -> Response {
 
 async fn api_proxy_external_status() -> Response {
     json_ok(proxy::external_status().await)
+}
+
+/// 账号自己的额度（积分）用量。与 WorkBuddy 的积分计费不是一回事。
+async fn api_proxy_external_entitlement() -> Response {
+    match proxy::external_entitlement().await {
+        Ok(value) => json_ok(value),
+        Err(err) => json_err(err, StatusCode::BAD_REQUEST),
+    }
 }
 
 async fn api_proxy_external_sign_in(Json(body): Json<Value>) -> Response {

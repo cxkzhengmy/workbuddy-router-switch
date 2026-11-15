@@ -860,6 +860,30 @@ function demoExternalStatus() {
   };
 }
 
+/** 账号额度演示：5 个包，与真实账单页同形。 */
+function demoExternalEntitlement() {
+  const day = 86_400_000;
+  const packs = [
+    { label: "免费", group: "", limit: null, used: 0, expiresAt: Date.now() + 15 * day },
+    { label: "每月登录赠送", group: "每月登录积分", limit: 500, used: 127.5, expiresAt: Date.now() + 15 * day },
+    { label: "签到奖励", group: "每日签到", limit: 100, used: 0, expiresAt: Date.now() + 9 * day },
+    { label: "签到奖励", group: "每日签到", limit: 100, used: 0, expiresAt: Date.now() + 11 * day },
+    { label: "签到奖励", group: "每日签到", limit: 100, used: 0, expiresAt: Date.now() + 31 * day },
+  ];
+  return {
+    ok: true,
+    total: 800,
+    used: 127.5,
+    left: 672.5,
+    ratio: 127.5 / 800,
+    unlimited: false,
+    expiresAt: Date.now() + 9 * day,
+    lapsing: 100,
+    packs,
+    fetchedAt: Date.now(),
+  };
+}
+
 export function screenshotDemoResponse(command: string, args?: Record<string, unknown>): unknown {
   const demoAccounts = hydratedAccounts();
   const appStatus: AppStatus = { running: true, authFile: "/demo/workbuddy/auth.json", current: { uid: demoAccounts[0].uid, nickname: demoAccounts[0].nickname, email: demoAccounts[0].email }, appPath: "/demo/WorkBuddy.app", version: "0.1.24" };
@@ -1050,6 +1074,7 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
     case "proxy_external_config": return demoExternalConfig();
     case "proxy_external_models": return { ok: true, models: demoExternalModels() };
     case "proxy_external_status": return demoExternalStatus();
+    case "proxy_external_entitlement": return demoExternalEntitlement();
     case "proxy_external_sign_in_state": return { state: "idle", url: "", message: "", realm: "trae-cn" };
     case "get_token_statistics": return demoTokenStatistics(typeof args?.days === "number" ? args.days : undefined);
     case "get_auto_checkin_config": return checkinConfig();

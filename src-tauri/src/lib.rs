@@ -342,6 +342,7 @@ pub fn run() {
             commands::proxy_save_external_config,
             commands::proxy_external_models,
             commands::proxy_external_status,
+            commands::proxy_external_entitlement,
             commands::proxy_external_sign_in,
             commands::proxy_external_sign_in_state,
             commands::proxy_external_sign_out,

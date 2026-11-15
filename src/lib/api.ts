@@ -63,6 +63,7 @@ import type {
   ProxyAccountConfig,
   ProxyAccountPolicy,
   ProxyExternalConfig,
+  ProxyExternalEntitlement,
   ProxyExternalSignIn,
   ProxyExternalStatus,
 } from "./types";
@@ -80,7 +81,7 @@ const DEMO_READ_COMMANDS = new Set([
   "get_status", "get_accounts", "get_codebuddy_cli_status", "get_codebuddy_cn_ide_status", "get_codebuddy_ide_status", "get_vscode_ext_status", "get_jetbrains_status", "list_vscode_sessions", "list_codebuddy_ide_sessions", "list_codebuddy_intl_ide_sessions", "vscode_session_links_preview", "codebuddy_ide_session_links_preview", "codebuddy_intl_ide_session_links_preview", "list_account_sessions", "session_links_preview_cross", "list_session_groups", "get_session_group", "preview_session_group_pair", "get_checkin_status",
   "get_credit_expiry", "get_credit_statistics", "get_credit_billing",
   "get_credit_multipliers", "get_auto_checkin_config",
-  "proxy_external_config", "proxy_external_models", "proxy_external_status", "proxy_external_sign_in_state",
+  "proxy_external_config", "proxy_external_models", "proxy_external_status", "proxy_external_entitlement", "proxy_external_sign_in_state",
   "get_token_statistics",
   "get_checkin_logs", "get_auto_rotate_config", "rotate_status", "get_rotate_logs",
   "get_github_config", "check_update", "get_launch_at_login_enabled", "switch_progress",
@@ -142,6 +143,7 @@ const ROUTES: Record<string, Route> = {
   proxy_save_external_config: { method: "POST", path: "/api/proxy/external/save" },
   proxy_external_models: { method: "POST", path: "/api/proxy/external/models" },
   proxy_external_status: { method: "GET", path: "/api/proxy/external/status" },
+  proxy_external_entitlement: { method: "GET", path: "/api/proxy/external/entitlement" },
   proxy_external_sign_in: { method: "POST", path: "/api/proxy/external/sign-in" },
   proxy_external_sign_in_state: { method: "GET", path: "/api/proxy/external/sign-in/state" },
   proxy_external_sign_out: { method: "POST", path: "/api/proxy/external/sign-out" },
@@ -1309,6 +1311,16 @@ export function proxyExternalModels(): Promise<{
 /** 账号状态：登录没登录、令牌还多久、目录拉到几个。 */
 export function proxyExternalStatus(): Promise<ProxyExternalStatus> {
   return call("proxy_external_status");
+}
+
+/**
+ * 账号自己的额度（积分）用量。
+ *
+ * 与 WorkBuddy 的积分计费是两套：走 Trae 通道消耗的是这里返回的额度，
+ * 不扣 WorkBuddy 积分。
+ */
+export function proxyExternalEntitlement(): Promise<ProxyExternalEntitlement> {
+  return call("proxy_external_entitlement");
 }
 
 /** 开始浏览器登录，返回要打开的官方授权页地址。 */

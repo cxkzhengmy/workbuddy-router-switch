@@ -24,7 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import * as api from "@/lib/api";
-import type { ProxyExternalConfig, ProxyExternalStatus } from "@/lib/types";
+import type { ProxyExternalConfig, ProxyExternalEntitlement, ProxyExternalStatus } from "@/lib/types";
 
 /**
  * 外部模型页：把内置网关接到 Trae（trae.cn / trae.ai）的模型上。
@@ -47,9 +47,21 @@ function humanLeft(minutes: number): string {
   return `${Math.floor(hours / 24)} 天 ${hours % 24} 小时`;
 }
 
+/** 额度数字：整数不带小数点，有小数才保留一位（800 / 672.5）。 */
+function quota(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+/** 本地时区的「几月几号」，额度到期用它。 */
+function shortDate(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+}
+
 export default function ExternalModelsPage() {
   const [cfg, setCfg] = useState<ProxyExternalConfig | null>(null);
   const [status, setStatus] = useState<ProxyExternalStatus | null>(null);
+  const [ent, setEnt] = useState<ProxyExternalEntitlement | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fetching, setFetching] = useState(false);
@@ -86,9 +98,19 @@ export default function ExternalModelsPage() {
 
   const checkStatus = useCallback(async () => {
     try {
-      setStatus(await api.proxyExternalStatus());
+      // 额度和账号状态一起刷：两者都依赖登录态，分开拉只会让「已登录但没额度」
+      // 这种中间状态多出现一次。额度拉不到不该让整个状态区报错，所以单独兜住。
+      const [next] = await Promise.all([
+        api.proxyExternalStatus(),
+        api
+          .proxyExternalEntitlement()
+          .then((e) => setEnt(e.ok ? e : null))
+          .catch(() => setEnt(null)),
+      ]);
+      setStatus(next);
     } catch (error) {
       setStatus(null);
+      setEnt(null);
       toast.error(`探测账号状态失败：${(error as Error).message}`);
     }
   }, []);
@@ -239,6 +261,7 @@ export default function ExternalModelsPage() {
     : leftMin !== null && leftMin <= 0
       ? { variant: "destructive" as const, text: "令牌过期" }
       : { variant: "default" as const, text: "可用" };
+  const quotaPct = ent?.ok ? Math.min(100, Math.max(0, Math.round(ent.ratio * 100))) : 0;
 
   return (
     <div className="space-y-4">
@@ -316,6 +339,41 @@ export default function ExternalModelsPage() {
               <div className="min-w-0">
                 <p>{status?.message ?? "还没有登录。点右上角「登录」开始。"}</p>
               </div>
+            </div>
+          )}
+
+          {signedIn && ent?.ok && (
+            <div className="rounded-md border bg-muted/30 p-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="text-xs font-medium">账号额度</p>
+                <p className="text-xs text-muted-foreground">
+                  {ent.unlimited ? "不限额度" : `剩 ${quota(ent.left)} / ${quota(ent.total)} 积分`}
+                </p>
+              </div>
+              {!ent.unlimited && (
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-foreground/10">
+                  <div
+                    className={`h-full rounded-full transition-[width] ${quotaPct >= 80 ? "bg-amber-500" : "bg-sky-500"}`}
+                    style={{ width: `${quotaPct}%` }}
+                  />
+                </div>
+              )}
+              <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                <span>
+                  已用 {quota(ent.used)}
+                  {!ent.unlimited && `（${quotaPct}%）`}
+                </span>
+                {ent.expiresAt ? (
+                  <span>
+                    {shortDate(ent.expiresAt)} 到期
+                    {ent.lapsing > 0 && `，届时 ${quota(ent.lapsing)} 分失效`}
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                这是 Trae 账号自己的额度，和 WorkBuddy 的积分是两套：走这条通道花的是它，
+                不扣 WorkBuddy 积分，所以「积分计费」页里不会出现这部分消耗。
+              </p>
             </div>
           )}
 

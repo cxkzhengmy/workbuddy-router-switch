@@ -334,6 +334,14 @@ pub fn external_sign_out() -> Value {
     external::sign_out()
 }
 
+/// 账号自己的额度（积分）用量。
+///
+/// 与 WorkBuddy 的积分计费是两回事：这里读的是 Trae 账单页的额度，
+/// 走 Trae 通道消耗的就是它。
+pub async fn external_entitlement() -> Result<Value, String> {
+    external::entitlement().await
+}
+
 // ---------------------------------------------------------------------------
 // 统计
 // ---------------------------------------------------------------------------
